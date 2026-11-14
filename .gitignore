@@ -1,0 +1,17 @@
+# Служебные и тяжёлые папки, которым не место в репозитории
+.gigatool/
+фотки/
+
+# База и логи сервера
+server/data.db
+server/data.db-wal
+server/data.db-shm
+server/out.log
+server/err.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Осиротевшие старые картинки (перенесены в temp)
+assets/gifts-v2/_legacy/

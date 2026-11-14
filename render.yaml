@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: farm-stars
+    runtime: python
+    plan: free
+    buildCommand: "python -m py_compile server/app.py server/store.py server/tgauth.py"
+    startCommand: "python server/app.py"
+    healthCheckPath: /api/health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ALLOW_GUEST
+        value: "1"
+      - key: DEV_MODE
+        value: "0"
+      - key: PYTHON_VERSION
+        value: "3.12.6"
