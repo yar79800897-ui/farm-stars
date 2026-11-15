@@ -8,10 +8,25 @@ from contextlib import contextmanager
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DB_PATH") or os.path.join(BASE_DIR, "data.db")
 
-START_STARS = 20
-START_COINS = 1000
+START_STARS = 0
+START_COINS = 0
 EXCHANGE_RATE = 2000
 PLUSH_RATE = 10000
+FREE_SPINS = 3
+PAID_SPIN_COST = 10
+
+WHEEL_PRIZES = [
+    {"text": "Пусто ❌", "type": "empty", "value": 0},
+    {"text": "500 💰", "type": "coins", "value": 500},
+    {"text": "Пусто ❌", "type": "empty", "value": 0},
+    {"text": "20 ⭐", "type": "stars", "value": 20},
+    {"text": "Пусто ❌", "type": "empty", "value": 0},
+    {"text": "1000 💰", "type": "coins", "value": 1000},
+    {"text": "Пусто ❌", "type": "empty", "value": 0},
+    {"text": "5 ⭐", "type": "stars", "value": 5}
+]
+
+MAX_FARM_AMOUNT = 50000
 
 _lock = threading.RLock()
 _conn = None
@@ -24,6 +39,8 @@ CREATE TABLE IF NOT EXISTS users (
     stars INTEGER NOT NULL DEFAULT 0,
     coins INTEGER NOT NULL DEFAULT 0,
     xp INTEGER NOT NULL DEFAULT 0,
+    wheel_date TEXT,
+    wheel_used INTEGER NOT NULL DEFAULT 0,
     created INTEGER NOT NULL,
     seen INTEGER NOT NULL
 );
@@ -82,6 +99,13 @@ def conn():
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.executescript(SCHEMA)
+
+        columns = [row[1] for row in _conn.execute("PRAGMA table_info(users)")]
+        if "wheel_date" not in columns:
+            _conn.execute("ALTER TABLE users ADD COLUMN wheel_date TEXT")
+        if "wheel_used" not in columns:
+            _conn.execute("ALTER TABLE users ADD COLUMN wheel_used INTEGER NOT NULL DEFAULT 0")
+
         for code, kind, amount, max_uses in SEED_PROMOS:
             _conn.execute(
                 "INSERT OR IGNORE INTO promos(code, kind, amount, max_uses) VALUES(?,?,?,?)",
@@ -124,6 +148,15 @@ def ensure_user(uid, name=None, username=None):
     return row
 
 
+def today():
+    return time.strftime("%Y-%m-%d", time.localtime())
+
+
+def spins_left_of(row):
+    used = row["wheel_used"] if row["wheel_date"] == today() else 0
+    return max(0, FREE_SPINS - used)
+
+
 def user_public(row):
     return {
         "id": row["uid"],
@@ -132,6 +165,7 @@ def user_public(row):
         "stars": row["stars"],
         "coins": row["coins"],
         "xp": row["xp"],
+        "spins_left": spins_left_of(row) if "wheel_used" in row.keys() else FREE_SPINS,
     }
 
 
@@ -284,6 +318,87 @@ def exchange(uid, coins):
         db.execute("UPDATE users SET coins=coins-?, stars=stars+? WHERE uid=?", (spent, stars, uid))
         after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
     return 200, {"ok": True, "stars": after["stars"], "coins": after["coins"], "spent": spent}
+
+
+def wheel_spin(uid):
+    """Крутит колесо на сервере: 3 бесплатных спина в день, дальше 10 ⭐."""
+    day = today()
+    with tx() as db:
+        row = db.execute(
+            "SELECT stars, coins, wheel_date, wheel_used FROM users WHERE uid=?", (uid,)
+        ).fetchone()
+        if row is None:
+            return 401, {"error": "no_user"}
+
+        used = row["wheel_used"] if row["wheel_date"] == day else 0
+        paid = used >= FREE_SPINS
+        if paid and row["stars"] < PAID_SPIN_COST:
+            return 402, {"error": "no_money", "need": PAID_SPIN_COST, "stars": row["stars"]}
+
+        index = int.from_bytes(os.urandom(4), "big") % len(WHEEL_PRIZES)
+        prize = WHEEL_PRIZES[index]
+
+        stars = row["stars"] - (PAID_SPIN_COST if paid else 0)
+        coins = row["coins"]
+        if prize["type"] == "stars":
+            stars += prize["value"]
+        elif prize["type"] == "coins":
+            coins += prize["value"]
+
+        new_used = used if paid else used + 1
+        db.execute(
+            "UPDATE users SET stars=?, coins=?, wheel_date=?, wheel_used=? WHERE uid=?",
+            (stars, coins, day, new_used, uid),
+        )
+
+    return 200, {
+        "index": index,
+        "prize": prize,
+        "stars": stars,
+        "coins": coins,
+        "spins_left": max(0, FREE_SPINS - new_used),
+        "paid": paid
+    }
+
+
+def farm_sell(uid, amount):
+    """Продажа продуктов с фермы: начисляет монеты на сервере."""
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return 400, {"error": "bad_amount"}
+    if amount <= 0 or amount > MAX_FARM_AMOUNT:
+        return 400, {"error": "bad_amount"}
+
+    with tx() as db:
+        row = db.execute("SELECT coins FROM users WHERE uid=?", (uid,)).fetchone()
+        if row is None:
+            return 401, {"error": "no_user"}
+        db.execute("UPDATE users SET coins=coins+? WHERE uid=?", (amount, uid))
+        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
+
+    return 200, {"ok": True, "coins": after["coins"], "stars": after["stars"]}
+
+
+def farm_buy(uid, amount):
+    """Покупки в ферме (животные, загоны, грядки): списывает монеты на сервере."""
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return 400, {"error": "bad_amount"}
+    if amount <= 0 or amount > MAX_FARM_AMOUNT:
+        return 400, {"error": "bad_amount"}
+
+    with tx() as db:
+        row = db.execute("SELECT coins FROM users WHERE uid=?", (uid,)).fetchone()
+        if row is None:
+            return 401, {"error": "no_user"}
+        if row["coins"] < amount:
+            return 402, {"error": "no_money", "coins": row["coins"]}
+        db.execute("UPDATE users SET coins=coins-? WHERE uid=?", (amount, uid))
+        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
+
+    return 200, {"ok": True, "coins": after["coins"], "stars": after["stars"]}
 
 
 def dev_grant(uid, stars=0, coins=0):

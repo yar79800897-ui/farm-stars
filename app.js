@@ -215,6 +215,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (Number.isFinite(data.stars)) currentStars = data.stars;
         if (Number.isFinite(data.coins)) currentCoins = data.coins;
         if (Array.isArray(data.inventory)) serverInventory = data.inventory;
+        if (Number.isFinite(data.spins_left)) {
+            spinsLeft = data.spins_left;
+            renderSpins();
+            updateSpinButtonState();
+        }
         renderBalances();
         saveWallet();
     }
@@ -331,9 +336,74 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    function animateWheelTo(targetIndex) {
+        const degreesPerSector = 360 / numSectors;
+        const targetAngle = 270 - (targetIndex * degreesPerSector) - (degreesPerSector / 2);
+        const totalRotation = 360 * 5 + targetAngle;
+
+        if (canvas) canvas.style.transform = `rotate(${totalRotation}deg)`;
+
+        setTimeout(() => {
+            isSpinning = false;
+            if (btnSpin) btnSpin.disabled = false;
+            if (canvas) {
+                canvas.style.transition = "none";
+                canvas.style.transform = `rotate(${totalRotation % 360}deg)`;
+                canvas.offsetHeight;
+                canvas.style.transition = "transform 4s cubic-bezier(0.1, 0.8, 0.1, 1)";
+            }
+        }, 4000);
+    }
+
+    function wheelPrizeText(prize) {
+        if (prize.type === "coins") return "Вы выиграли: " + prize.text + " 💰";
+        if (prize.type === "stars") return "УРА! Вы выиграли: " + prize.text + " ⭐";
+        return "В этот раз пусто. Попробуй еще! 🍀";
+    }
+
     if (btnSpin) {
-        btnSpin.addEventListener("click", () => {
+        btnSpin.addEventListener("click", async () => {
             if (isSpinning) return;
+
+            if (serverMode) {
+                isSpinning = true;
+                btnSpin.disabled = true;
+                if (wheelStatusText) {
+                    wheelStatusText.style.color = "#ccff00";
+                    wheelStatusText.textContent = "Колесо желаний крутится...";
+                }
+
+                let result;
+                try {
+                    result = await api("/api/wheel/spin", { method: "POST", body: "{}" });
+                } catch (error) {
+                    isSpinning = false;
+                    btnSpin.disabled = false;
+                    if (wheelStatusText) {
+                        wheelStatusText.style.color = "#ff3838";
+                        if (error.status === 402) {
+                            wheelStatusText.textContent = "Бесплатные прокруты кончились, а Stars не хватает ❌";
+                        } else if (error.status === 401) {
+                            wheelStatusText.textContent = "Открой приложение через Telegram ⭐";
+                        } else {
+                            wheelStatusText.textContent = "Сервер не ответил. Попробуй ещё раз.";
+                        }
+                    }
+                    return;
+                }
+
+                applyServerState(result);
+                spinsLeft = result.spins_left;
+                renderSpins();
+                updateSpinButtonState();
+                animateWheelTo(result.index);
+                setTimeout(() => {
+                    if (!wheelStatusText) return;
+                    wheelStatusText.style.color = "#ccff00";
+                    wheelStatusText.textContent = wheelPrizeText(result.prize);
+                }, 4000);
+                return;
+            }
 
             let isPaidSpin = false;
             if (spinsLeft <= 0) {
@@ -1208,16 +1278,25 @@ document.addEventListener("DOMContentLoaded", () => {
         field.style.color = color || "#ccff00";
     }
 
+    function farmSync(path, sum) {
+        if (!serverMode) return;
+        api(path, { method: "POST", body: JSON.stringify({ coins: sum }) })
+            .then(applyServerState)
+            .catch(function () { /* сервер поправит баланс при следующей синхронизации */ });
+    }
+
     if (window.Farm) {
         Farm.init({
             onSell: function (sum) {
                 addCoins(sum);
+                farmSync("/api/farm/sell", sum);
             },
             onSpend: function (sum) {
                 if (currentCoins < sum) return false;
                 currentCoins -= sum;
                 renderBalances();
                 saveWallet();
+                farmSync("/api/farm/buy", sum);
                 return true;
             },
             getCoins: function () {
@@ -1356,7 +1435,15 @@ document.addEventListener("DOMContentLoaded", () => {
                         "#ccff00"
                     );
                 } catch (error) {
-                    setExchangeStatus("Сервер не ответил. Попробуй ещё раз.", "#ff3838");
+                    if (error.status === 402) {
+                        setExchangeStatus("На сервере монет меньше — перезагрузи приложение, баланс подтянется.", "#ff3838");
+                    } else if (error.status === 400) {
+                        setExchangeStatus("Минимум " + EXCHANGE_RATE + " 💰 для обмена", "#ff3838");
+                    } else if (error.status === 401) {
+                        setExchangeStatus("Открой приложение через Telegram ⭐", "#ff3838");
+                    } else {
+                        setExchangeStatus("Сервер не ответил. Попробуй ещё раз.", "#ff3838");
+                    }
                 }
                 return;
             }

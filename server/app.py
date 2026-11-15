@@ -141,6 +141,29 @@ class Handler(BaseHTTPRequestHandler):
             status, payload = store.exchange(uid, data.get("coins"))
             return self._json(status, payload)
 
+        if path == "/api/wheel/spin":
+            uid, row = self._identity()
+            if row is None:
+                return self._json(401, {"error": "unauthorized"})
+            status, payload = store.wheel_spin(uid)
+            return self._json(status, payload)
+
+        if path == "/api/farm/sell":
+            uid, row = self._identity()
+            if row is None:
+                return self._json(401, {"error": "unauthorized"})
+            data = self._body()
+            status, payload = store.farm_sell(uid, data.get("coins"))
+            return self._json(status, payload)
+
+        if path == "/api/farm/buy":
+            uid, row = self._identity()
+            if row is None:
+                return self._json(401, {"error": "unauthorized"})
+            data = self._body()
+            status, payload = store.farm_buy(uid, data.get("coins"))
+            return self._json(status, payload)
+
         if path == "/api/dev/grant" and DEV_MODE:
             uid, row = self._identity()
             if row is None:
