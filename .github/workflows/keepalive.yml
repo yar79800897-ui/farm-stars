@@ -1,0 +1,22 @@
+name: keep-alive
+
+on:
+  schedule:
+    # GitHub запускает каждые ~10 минут: сервис на Render не успевает заснуть
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render health endpoint
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 https://farm-stars.onrender.com/api/health || true)
+            echo "attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 15
+          done
+          echo "service did not answer in time, skipping"
+          exit 0
