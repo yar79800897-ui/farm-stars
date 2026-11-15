@@ -2,18 +2,21 @@ import json
 import mimetypes
 import os
 import posixpath
+import secrets
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import store
 import tgauth
+import tgapi
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT = int(os.environ.get("PORT", "8080"))
 ALLOW_GUEST = os.environ.get("ALLOW_GUEST", "1") == "1"
 DEV_MODE = os.environ.get("DEV_MODE", "0") == "1"
 MAX_BODY = 64 * 1024
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET") or ("devsecret" if DEV_MODE else secrets.token_hex(16))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,6 +112,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "not_found"})
 
     def _api_post(self, path):
+        if path == "/api/telegram/webhook":
+            return self._webhook()
+
         if path == "/api/spin":
             uid, row = self._identity()
             if row is None:
@@ -164,6 +170,34 @@ class Handler(BaseHTTPRequestHandler):
             status, payload = store.farm_buy(uid, data.get("coins"))
             return self._json(status, payload)
 
+        if path == "/api/invoice":
+            uid, row = self._identity()
+            if row is None:
+                return self._json(401, {"error": "unauthorized"})
+            data = self._body()
+            try:
+                stars = int(data.get("stars"))
+            except (TypeError, ValueError):
+                return self._json(400, {"error": "bad_amount"})
+            if stars < 10 or stars > 100000:
+                return self._json(400, {"error": "bad_amount"})
+
+            payload = "{}:{}".format(uid, secrets.token_hex(8))
+            result = tgapi.create_invoice_link(
+                "Farm Stars",
+                "Пополнение баланса на {} ⭐".format(stars),
+                payload,
+                stars,
+            )
+            if not result.get("ok"):
+                return self._json(502, {
+                    "error": "telegram",
+                    "description": result.get("description", "telegram error")
+                })
+
+            store.create_invoice(uid, stars, payload)
+            return self._json(200, {"link": result.get("result"), "stars": stars})
+
         if path == "/api/dev/grant" and DEV_MODE:
             uid, row = self._identity()
             if row is None:
@@ -173,6 +207,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(status, payload)
 
         return self._json(404, {"error": "not_found"})
+
+    def _webhook(self):
+        if self.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != WEBHOOK_SECRET:
+            return self._json(403, {"error": "forbidden"})
+
+        update = self._body()
+        if not update:
+            return self._json(400, {"error": "bad_update"})
+
+        if "pre_checkout_query" in update:
+            query = update.get("pre_checkout_query") or {}
+            invoice = store.invoice_by_payload(query.get("invoice_payload", ""))
+            if invoice is None:
+                tgapi.answer_pre_checkout(query.get("id"), ok=False, error="Счёт не найден")
+            else:
+                tgapi.answer_pre_checkout(query.get("id"), ok=True)
+            return self._json(200, {"ok": True})
+
+        payment = (update.get("message") or {}).get("successful_payment")
+        if payment:
+            store.mark_invoice_paid(
+                payment.get("invoice_payload", ""),
+                payment.get("telegram_payment_charge_id", "")
+            )
+        return self._json(200, {"ok": True})
 
     # ---------- статика ----------
 
@@ -206,11 +265,21 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+def register_webhook():
+    public = (os.environ.get("PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if not public or not tgapi.BOT_TOKEN:
+        return
+    result = tgapi.set_webhook(public + "/api/telegram/webhook", WEBHOOK_SECRET)
+    print("webhook: {} -> ok={} {}".format(
+        public, result.get("ok"), result.get("description", "")))
+
+
 def main():
     os.chdir(ROOT)
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Farm Stars server on http://0.0.0.0:{} (gifts: {}, bot token: {})".format(
         PORT, len(store.CATALOGUE), "yes" if tgauth.BOT_TOKEN else "no"))
+    register_webhook()
     httpd.serve_forever()
 
 

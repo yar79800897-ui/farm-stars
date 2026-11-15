@@ -1106,6 +1106,33 @@ h2 {
     justify-content: center;
 }
 
+.topup-packages {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.topup-packages.hidden-packages {
+    display: none;
+}
+
+.pack-btn {
+    flex: 1 1 72px;
+    padding: 11px 8px;
+    border-radius: 14px;
+    border: 1px solid rgba(204, 255, 0, 0.45);
+    background-color: rgba(204, 255, 0, 0.08);
+    color: #ccff00;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.pack-btn:active {
+    transform: scale(0.97);
+    background-color: rgba(204, 255, 0, 0.16);
+}
+
 .topup-steps {
     display: flex;
     flex-direction: column;

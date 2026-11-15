@@ -1057,6 +1057,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const topupBackdrop = document.getElementById("topup-backdrop");
     const btnTopupClose = document.getElementById("btn-topup-close");
     const topupGrid = document.getElementById("topup-grid");
+    const topupPackages = document.getElementById("topup-packages");
     const topupStatus = document.getElementById("topup-status");
     const promoInput = document.getElementById("promo-input");
     const btnApplyPromo = document.getElementById("btn-apply-promo");
@@ -1101,6 +1102,74 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    const TOPUP_PACKAGES = [50, 100, 250, 500, 1000, 2500];
+
+    function renderTopupPackages() {
+        if (!topupPackages) return;
+        topupPackages.innerHTML = "";
+
+        TOPUP_PACKAGES.forEach(amount => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "pack-btn";
+            button.textContent = amount + " ⭐";
+            button.addEventListener("click", () => buyStars(amount));
+            topupPackages.appendChild(button);
+        });
+
+        topupPackages.classList.remove("hidden-packages");
+    }
+
+    async function buyStars(amount) {
+        if (!serverMode) {
+            setTopupStatus("Оплата работает на серверной версии приложения.", "#8e9297");
+            return;
+        }
+
+        const tg = window.Telegram && window.Telegram.WebApp;
+        if (!tg || !tg.openInvoice) {
+            setTopupStatus("Открой приложение через Telegram, чтобы оплатить ⭐", "#ff3838");
+            return;
+        }
+
+        setTopupStatus("Создаём счёт на " + amount + " ⭐...", "#8e9297");
+
+        let invoice;
+        try {
+            invoice = await api("/api/invoice", {
+                method: "POST",
+                body: JSON.stringify({ stars: amount })
+            });
+        } catch (error) {
+            if (error.status === 401) {
+                setTopupStatus("Открой приложение через Telegram ⭐", "#ff3838");
+            } else if (error.status === 502) {
+                setTopupStatus("Платежи ещё не настроены: бот без токена.", "#ff3838");
+            } else {
+                setTopupStatus("Не удалось создать счёт. Попробуй позже.", "#ff3838");
+            }
+            return;
+        }
+
+        tg.openInvoice(invoice.link, function (status) {
+            if (status === "paid") {
+                setTopupStatus("Оплата прошла, начисляем звёзды...", "#ccff00");
+                setTimeout(async function () {
+                    try {
+                        applyServerState(await api("/api/me"));
+                        setTopupStatus("Готово: +" + amount + " ⭐ на балансе", "#ccff00");
+                    } catch (error) {
+                        setTopupStatus("Оплата прошла, баланс обновится через минуту.", "#ccff00");
+                    }
+                }, 1500);
+            } else if (status === "cancelled") {
+                setTopupStatus("Оплата отменена.", "#8e9297");
+            } else {
+                setTopupStatus("Оплата не прошла. Попробуй ещё раз.", "#ff3838");
+            }
+        });
+    }
+
     function choosePayMethod(method, tile) {
         if (method.soon) {
             setTopupStatus("Способ «" + method.label + "» появится позже.", "#8e9297");
@@ -1108,9 +1177,20 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         topupGrid.querySelectorAll(".method.selected").forEach(el => el.classList.remove("selected"));
-        if (tile) tile.classList.add("selected");
+            if (tile) tile.classList.add("selected");
 
-        const link = CONFIG.payLinks[method.id];
+            if (method.id === "stars") {
+                if (!serverMode) {
+                    setTopupStatus("Оплата звёздами работает на серверной версии приложения.", "#8e9297");
+                    return;
+                }
+                renderTopupPackages();
+                setTopupStatus("Выбери сумму пополнения ⭐", "#8e9297");
+                return;
+            }
+
+            const link = CONFIG.payLinks[method.id];
+
 
         if (!link) {
             setTopupStatus(
@@ -1214,6 +1294,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!topupModal) return;
         renderPayMethods();
         setTopupStatus("");
+        if (topupPackages) topupPackages.classList.add("hidden-packages");
         topupModal.classList.remove("hidden-topup");
     }
 
@@ -1261,13 +1342,28 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnFarmBack = document.getElementById("btn-farm-back");
     const levelTextField = document.getElementById("user-level");
     const levelFill = document.getElementById("level-fill");
-    const LEVEL_STEP = 150;
+    const LEVEL_BASE = 150;
+    const LEVEL_GROWTH = 1.2;
+
+    function levelInfo(xp) {
+        const safe = Math.max(0, Number(xp) || 0);
+        let level = 1;
+        let need = LEVEL_BASE;
+        let passed = 0;
+
+        while (safe >= passed + need && level < 999) {
+            passed += need;
+            level += 1;
+            need = Math.round(need * LEVEL_GROWTH);
+        }
+
+        return { level: level, into: safe - passed, need: need };
+    }
 
     function renderLevel(xp) {
-        const safeXp = Math.max(0, Number(xp) || 0);
-        const level = 1 + Math.floor(safeXp / LEVEL_STEP);
-        const progress = ((safeXp % LEVEL_STEP) / LEVEL_STEP) * 100;
-        if (levelTextField) levelTextField.textContent = "Уровень " + level;
+        const info = levelInfo(xp);
+        const progress = Math.max(0, Math.min(100, (info.into / info.need) * 100));
+        if (levelTextField) levelTextField.textContent = "Уровень " + info.level;
         if (levelFill) levelFill.style.width = progress.toFixed(0) + "%";
     }
 

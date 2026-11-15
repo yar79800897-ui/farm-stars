@@ -79,6 +79,17 @@ CREATE TABLE IF NOT EXISTS spins (
     ts INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS spins_uid ON spins(uid);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid TEXT NOT NULL,
+    stars INTEGER NOT NULL,
+    payload TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    charge_id TEXT,
+    created INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS invoices_uid ON invoices(uid);
 """
 
 SEED_PROMOS = [
@@ -399,6 +410,38 @@ def farm_buy(uid, amount):
         after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
 
     return 200, {"ok": True, "coins": after["coins"], "stars": after["stars"]}
+
+
+def create_invoice(uid, stars, payload):
+    with tx() as db:
+        db.execute(
+            "INSERT INTO invoices(uid, stars, payload, status, created) VALUES(?,?,?,?,?)",
+            (uid, stars, payload, "pending", now()),
+        )
+    return True
+
+
+def invoice_by_payload(payload):
+    return conn().execute("SELECT * FROM invoices WHERE payload=?", (payload,)).fetchone()
+
+
+def mark_invoice_paid(payload, charge_id):
+    """Идемпотентно начисляет звёзды за оплаченный счёт."""
+    with tx() as db:
+        row = db.execute("SELECT * FROM invoices WHERE payload=?", (payload,)).fetchone()
+        if row is None or row["status"] == "paid":
+            return None
+        db.execute(
+            "UPDATE invoices SET status='paid', charge_id=? WHERE payload=?", (charge_id, payload)
+        )
+        db.execute("UPDATE users SET stars=stars+? WHERE uid=?", (row["stars"], row["uid"]))
+        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (row["uid"],)).fetchone()
+    return {
+        "uid": row["uid"],
+        "amount": row["stars"],
+        "stars": after["stars"],
+        "coins": after["coins"],
+    }
 
 
 def dev_grant(uid, stars=0, coins=0):
