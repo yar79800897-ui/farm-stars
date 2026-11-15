@@ -1103,6 +1103,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const TOPUP_PACKAGES = [50, 100, 250, 500, 1000, 2500];
+    const MIN_TOPUP = 10;
+    const MAX_TOPUP = 100000;
 
     function renderTopupPackages() {
         if (!topupPackages) return;
@@ -1116,6 +1118,44 @@ document.addEventListener("DOMContentLoaded", () => {
             button.addEventListener("click", () => buyStars(amount));
             topupPackages.appendChild(button);
         });
+
+        const custom = document.createElement("div");
+        custom.className = "pack-custom";
+
+        const input = document.createElement("input");
+        input.type = "number";
+        input.inputMode = "numeric";
+        input.min = String(MIN_TOPUP);
+        input.step = "1";
+        input.className = "pack-input";
+        input.placeholder = "Своя сумма, от " + MIN_TOPUP + " ⭐";
+
+        const submit = document.createElement("button");
+        submit.type = "button";
+        submit.className = "pack-buy";
+        submit.textContent = "Пополнить";
+
+        const send = () => {
+            const raw = Math.floor(Number(input.value));
+            if (!Number.isFinite(raw) || raw < MIN_TOPUP) {
+                setTopupStatus("Минимальная сумма — " + MIN_TOPUP + " ⭐", "#ff3838");
+                return;
+            }
+            if (raw > MAX_TOPUP) {
+                setTopupStatus("Максимум за один раз — " + MAX_TOPUP.toLocaleString() + " ⭐", "#ff3838");
+                return;
+            }
+            buyStars(raw);
+        };
+
+        submit.addEventListener("click", send);
+        input.addEventListener("keydown", event => {
+            if (event.key === "Enter") send();
+        });
+
+        custom.appendChild(input);
+        custom.appendChild(submit);
+        topupPackages.appendChild(custom);
 
         topupPackages.classList.remove("hidden-packages");
     }
@@ -1185,7 +1225,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     return;
                 }
                 renderTopupPackages();
-                setTopupStatus("Выбери сумму пополнения ⭐", "#8e9297");
+                setTopupStatus("Выбери сумму или введи свою — минимум " + MIN_TOPUP + " ⭐", "#8e9297");
                 return;
             }
 

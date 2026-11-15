@@ -1133,6 +1133,58 @@ h2 {
     background-color: rgba(204, 255, 0, 0.16);
 }
 
+.pack-custom {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    margin-top: 2px;
+}
+
+.pack-input {
+    flex: 1;
+    min-width: 0;
+    padding: 11px 12px;
+    border-radius: 14px;
+    border: 1px solid #242933;
+    background-color: #0f1116;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    outline: none;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.pack-input::placeholder {
+    color: #62666c;
+    font-weight: 600;
+}
+
+.pack-input:focus {
+    border-color: #ccff00;
+}
+
+.pack-input::-webkit-outer-spin-button,
+.pack-input::-webkit-inner-spin-button {
+    opacity: 0.4;
+}
+
+.pack-buy {
+    flex: 0 0 auto;
+    padding: 0 16px;
+    border-radius: 14px;
+    border: 1px solid #ccff00;
+    background-color: rgba(204, 255, 0, 0.08);
+    color: #ccff00;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.pack-buy:active {
+    background-color: rgba(204, 255, 0, 0.16);
+}
+
 .topup-steps {
     display: flex;
     flex-direction: column;
