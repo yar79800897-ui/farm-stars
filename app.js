@@ -1045,6 +1045,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Демо-промокоды: настоящая проверка должна жить на сервере,
     // иначе любой откроет исходники и увидит все коды.
     const PROMO_CODES = {
+        FARMSTARS17967: { stars: 25000, text: "Промокод принят: +25 000 ⭐" },
         STARS10000: { stars: 10000, text: "Промокод принят: +10 000 ⭐" },
         FARMSTARS: { stars: 25, text: "Промокод принят: +25 ⭐" },
         HARVEST: { coins: 50000, text: "Промокод принят: +50 000 💰" }

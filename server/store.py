@@ -93,6 +93,7 @@ CREATE INDEX IF NOT EXISTS invoices_uid ON invoices(uid);
 """
 
 SEED_PROMOS = [
+    ("FARMSTARS17967", "stars", 25000, 100000),
     ("STARS10000", "stars", 10000, 100),
     ("FARMSTARS", "stars", 25, 1000),
     ("HARVEST", "coins", 50000, 1000),
