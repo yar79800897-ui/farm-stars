@@ -67,24 +67,11 @@ class TursoClient:
         except Exception as exc:
             raise TursoError("turso network: {}".format(exc))
 
-    def execute(self, sql, params=()):
-        payload = {
-            "requests": [
-                {"type": "execute", "stmt": {"sql": sql, "args": [_encode(p) for p in (params or ())]}},
-                {"type": "close"},
-            ]
-        }
-        data = self._post(payload)
-        results = data.get("results") or []
-        if not results:
-            raise TursoError("turso: пустой ответ")
-
-        first = results[0]
-        if first.get("type") != "ok":
-            error = first.get("error") or {}
+    def _parse(self, item):
+        if item.get("type") != "ok":
+            error = item.get("error") or {}
             raise TursoError("turso: {} {}".format(error.get("code"), error.get("message")))
-
-        response = first.get("response") or {}
+        response = item.get("response") or {}
         result = response.get("result") or {}
         columns = [column.get("name") for column in (result.get("cols") or [])]
         rows = []
@@ -94,3 +81,22 @@ class TursoClient:
                 for i, value in enumerate(raw)
             })
         return rows
+
+    def _send(self, statements):
+        requests = [
+            {"type": "execute", "stmt": {"sql": sql, "args": [_encode(p) for p in (params or ())]}}
+            for sql, params in statements
+        ]
+        requests.append({"type": "close"})
+        data = self._post({"requests": requests})
+        results = data.get("results") or []
+        if len(results) < len(statements):
+            raise TursoError("turso: неполный ответ")
+        return [self._parse(item) for item in results[:len(statements)]]
+
+    def execute(self, sql, params=()):
+        return self._send([(sql, params)])[0]
+
+    def batch(self, statements):
+        """Несколько запросов за один HTTP-вызов."""
+        return self._send(list(statements))
