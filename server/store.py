@@ -3,10 +3,13 @@ import re
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
+
+from turso import TursoClient
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DB_PATH") or os.path.join(BASE_DIR, "data.db")
+TURSO_URL = (os.environ.get("TURSO_URL") or "").strip()
+TURSO_TOKEN = (os.environ.get("TURSO_TOKEN") or "").strip()
 
 START_STARS = 0
 START_COINS = 0
@@ -14,6 +17,7 @@ EXCHANGE_RATE = 2000
 PLUSH_RATE = 10000
 FREE_SPINS = 3
 PAID_SPIN_COST = 10
+MAX_FARM_AMOUNT = 50000
 
 WHEEL_PRIZES = [
     {"text": "Пусто ❌", "type": "empty", "value": 0},
@@ -26,72 +30,6 @@ WHEEL_PRIZES = [
     {"text": "5 ⭐", "type": "stars", "value": 5}
 ]
 
-MAX_FARM_AMOUNT = 50000
-
-_lock = threading.RLock()
-_conn = None
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    uid TEXT PRIMARY KEY,
-    name TEXT,
-    username TEXT,
-    stars INTEGER NOT NULL DEFAULT 0,
-    coins INTEGER NOT NULL DEFAULT 0,
-    xp INTEGER NOT NULL DEFAULT 0,
-    wheel_date TEXT,
-    wheel_used INTEGER NOT NULL DEFAULT 0,
-    created INTEGER NOT NULL,
-    seen INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS inventory (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid TEXT NOT NULL,
-    gift TEXT NOT NULL,
-    price INTEGER NOT NULL,
-    ts INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS inventory_uid ON inventory(uid);
-
-CREATE TABLE IF NOT EXISTS promos (
-    code TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    max_uses INTEGER NOT NULL DEFAULT 1,
-    used INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS promo_uses (
-    code TEXT NOT NULL,
-    uid TEXT NOT NULL,
-    ts INTEGER NOT NULL,
-    PRIMARY KEY (code, uid)
-);
-
-CREATE TABLE IF NOT EXISTS spins (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid TEXT NOT NULL,
-    gift TEXT NOT NULL,
-    chance INTEGER NOT NULL,
-    cost INTEGER NOT NULL,
-    won INTEGER NOT NULL,
-    ts INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS spins_uid ON spins(uid);
-
-CREATE TABLE IF NOT EXISTS invoices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid TEXT NOT NULL,
-    stars INTEGER NOT NULL,
-    payload TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL DEFAULT 'pending',
-    charge_id TEXT,
-    created INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS invoices_uid ON invoices(uid);
-"""
-
 SEED_PROMOS = [
     ("FARMSTARS17967", "stars", 25000, 100000),
     ("STARS10000", "stars", 10000, 100),
@@ -99,65 +37,127 @@ SEED_PROMOS = [
     ("HARVEST", "coins", 50000, 1000),
 ]
 
+SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS users (
+        uid TEXT PRIMARY KEY,
+        name TEXT,
+        username TEXT,
+        stars INTEGER NOT NULL DEFAULT 0,
+        coins INTEGER NOT NULL DEFAULT 0,
+        xp INTEGER NOT NULL DEFAULT 0,
+        wheel_date TEXT,
+        wheel_used INTEGER NOT NULL DEFAULT 0,
+        created INTEGER NOT NULL,
+        seen INTEGER NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS inventory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid TEXT NOT NULL,
+        gift TEXT NOT NULL,
+        price INTEGER NOT NULL,
+        ts INTEGER NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS inventory_uid ON inventory(uid)",
+    """CREATE TABLE IF NOT EXISTS promos (
+        code TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        max_uses INTEGER NOT NULL DEFAULT 1,
+        used INTEGER NOT NULL DEFAULT 0
+    )""",
+    """CREATE TABLE IF NOT EXISTS promo_uses (
+        code TEXT NOT NULL,
+        uid TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        PRIMARY KEY (code, uid)
+    )""",
+    """CREATE TABLE IF NOT EXISTS spins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid TEXT NOT NULL,
+        gift TEXT NOT NULL,
+        chance INTEGER NOT NULL,
+        cost INTEGER NOT NULL,
+        won INTEGER NOT NULL,
+        ts INTEGER NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS spins_uid ON spins(uid)",
+    """CREATE TABLE IF NOT EXISTS invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid TEXT NOT NULL,
+        stars INTEGER NOT NULL,
+        payload TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'pending',
+        charge_id TEXT,
+        created INTEGER NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS invoices_uid ON invoices(uid)",
+]
+
+
+class SQLiteBackend:
+    name = "sqlite"
+
+    def __init__(self, path):
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+
+    def query(self, sql, params=()):
+        with self._lock:
+            cursor = self._conn.execute(sql, tuple(params or ()))
+            if cursor.description is None:
+                return []
+            return [dict(row) for row in cursor.fetchall()]
+
+
+class TursoBackend:
+    name = "turso"
+
+    def __init__(self, url, token):
+        self._client = TursoClient(url, token)
+
+    def query(self, sql, params=()):
+        return self._client.execute(sql, tuple(params or ()))
+
+
+_backend = None
+
+
+def backend():
+    global _backend
+    if _backend is None:
+        if TURSO_URL and TURSO_TOKEN:
+            _backend = TursoBackend(TURSO_URL, TURSO_TOKEN)
+        else:
+            _backend = SQLiteBackend(DB_PATH)
+        init_schema(_backend)
+    return _backend
+
+
+def backend_name():
+    return backend().name
+
+
+def init_schema(db):
+    for statement in SCHEMA:
+        db.query(statement)
+
+    columns = [row["name"] for row in db.query("PRAGMA table_info(users)")]
+    if "wheel_date" not in columns:
+        db.query("ALTER TABLE users ADD COLUMN wheel_date TEXT")
+    if "wheel_used" not in columns:
+        db.query("ALTER TABLE users ADD COLUMN wheel_used INTEGER NOT NULL DEFAULT 0")
+
+    for code, kind, amount, max_uses in SEED_PROMOS:
+        db.query(
+            "INSERT OR IGNORE INTO promos(code, kind, amount, max_uses) VALUES(?,?,?,?)",
+            (code, kind, amount, max_uses),
+        )
+
 
 def now():
     return int(time.time())
-
-
-def conn():
-    global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.executescript(SCHEMA)
-
-        columns = [row[1] for row in _conn.execute("PRAGMA table_info(users)")]
-        if "wheel_date" not in columns:
-            _conn.execute("ALTER TABLE users ADD COLUMN wheel_date TEXT")
-        if "wheel_used" not in columns:
-            _conn.execute("ALTER TABLE users ADD COLUMN wheel_used INTEGER NOT NULL DEFAULT 0")
-
-        for code, kind, amount, max_uses in SEED_PROMOS:
-            _conn.execute(
-                "INSERT OR IGNORE INTO promos(code, kind, amount, max_uses) VALUES(?,?,?,?)",
-                (code, kind, amount, max_uses),
-            )
-    return _conn
-
-
-@contextmanager
-def tx():
-    db = conn()
-    with _lock:
-        db.execute("BEGIN IMMEDIATE")
-        try:
-            yield db
-        except Exception:
-            db.execute("ROLLBACK")
-            raise
-        else:
-            db.execute("COMMIT")
-
-
-def ensure_user(uid, name=None, username=None):
-    db = conn()
-    ts = now()
-    with _lock:
-        row = db.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
-        if row is None:
-            db.execute(
-                "INSERT INTO users(uid, name, username, stars, coins, xp, created, seen) VALUES(?,?,?,?,?,?,?,?)",
-                (uid, name or "Фермер", username or "", START_STARS, START_COINS, 0, ts, ts),
-            )
-            row = db.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
-        else:
-            db.execute(
-                "UPDATE users SET seen=?, name=COALESCE(?, name), username=COALESCE(?, username) WHERE uid=?",
-                (ts, name, username, uid),
-            )
-            row = db.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
-    return row
 
 
 def today():
@@ -165,28 +165,47 @@ def today():
 
 
 def spins_left_of(row):
-    used = row["wheel_used"] if row["wheel_date"] == today() else 0
+    used = row.get("wheel_used") or 0
+    if row.get("wheel_date") != today():
+        used = 0
     return max(0, FREE_SPINS - used)
+
+
+def ensure_user(uid, name=None, username=None):
+    db = backend()
+    rows = db.query("SELECT * FROM users WHERE uid=?", (uid,))
+    ts = now()
+    if not rows:
+        db.query(
+            "INSERT INTO users(uid, name, username, stars, coins, xp, wheel_date, wheel_used, created, seen) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (uid, name or "Фермер", username or "", START_STARS, START_COINS, 0, today(), 0, ts, ts),
+        )
+        rows = db.query("SELECT * FROM users WHERE uid=?", (uid,))
+    else:
+        db.query("UPDATE users SET seen=?, name=?, username=? WHERE uid=?",
+                 (ts, name or rows[0].get("name") or "Фермер", username or rows[0].get("username") or "", uid))
+        rows = db.query("SELECT * FROM users WHERE uid=?", (uid,))
+    return rows[0]
 
 
 def user_public(row):
     return {
         "id": row["uid"],
-        "name": row["name"],
-        "username": row["username"],
-        "stars": row["stars"],
-        "coins": row["coins"],
-        "xp": row["xp"],
-        "spins_left": spins_left_of(row) if "wheel_used" in row.keys() else FREE_SPINS,
+        "name": row.get("name"),
+        "username": row.get("username"),
+        "stars": row.get("stars") or 0,
+        "coins": row.get("coins") or 0,
+        "xp": row.get("xp") or 0,
+        "spins_left": spins_left_of(row),
     }
 
 
 def inventory_of(uid):
-    db = conn()
-    rows = db.execute(
+    rows = backend().query(
         "SELECT id, gift, price, ts FROM inventory WHERE uid=? ORDER BY id DESC", (uid,)
-    ).fetchall()
-    return [dict(r) for r in rows]
+    )
+    return [dict(row) for row in rows]
 
 
 GIFTS_DIR = os.path.join(os.path.dirname(BASE_DIR), "assets", "gifts-v2")
@@ -223,37 +242,37 @@ def spin(uid, gift_file, chance):
     if chance < 1 or chance > 85:
         return 400, {"error": "bad_chance"}
 
+    db = backend()
     cost = gift["rate"] * chance
+    rows = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    if (rows[0].get("stars") or 0) < cost:
+        return 402, {"error": "no_money", "need": cost, "stars": rows[0].get("stars") or 0}
+
     won = int.from_bytes(os.urandom(4), "big") % 100 < chance
     ts = now()
 
-    with tx() as db:
-        row = db.execute("SELECT stars FROM users WHERE uid=?", (uid,)).fetchone()
-        if row is None:
-            return 401, {"error": "no_user"}
-        if row["stars"] < cost:
-            return 402, {"error": "no_money", "need": cost, "stars": row["stars"]}
-
-        db.execute("UPDATE users SET stars=stars-? WHERE uid=?", (cost, uid))
-        if won:
-            db.execute(
-                "INSERT INTO inventory(uid, gift, price, ts) VALUES(?,?,?,?)",
-                (uid, gift["file"], gift["price"], ts),
-            )
-        db.execute(
-            "INSERT INTO spins(uid, gift, chance, cost, won, ts) VALUES(?,?,?,?,?,?)",
-            (uid, gift["file"], chance, cost, 1 if won else 0, ts),
+    db.query("UPDATE users SET stars=stars-? WHERE uid=? AND stars>=?", (cost, uid, cost))
+    if won:
+        db.query(
+            "INSERT INTO inventory(uid, gift, price, ts) VALUES(?,?,?,?)",
+            (uid, gift["file"], gift["price"], ts),
         )
-        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
+    db.query(
+        "INSERT INTO spins(uid, gift, chance, cost, won, ts) VALUES(?,?,?,?,?,?)",
+        (uid, gift["file"], chance, cost, 1 if won else 0, ts),
+    )
 
+    after = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
     payload = {
         "won": won,
         "gift": gift["file"],
         "price": gift["price"],
         "chance": chance,
         "cost": cost,
-        "stars": after["stars"],
-        "coins": after["coins"],
+        "stars": after[0].get("stars") or 0,
+        "coins": after[0].get("coins") or 0,
     }
     if won:
         payload["inventory"] = inventory_of(uid)
@@ -264,36 +283,36 @@ def apply_promo(uid, code):
     code = (code or "").strip().upper()
     if not code:
         return 400, {"error": "empty"}
+
+    db = backend()
+    rows = db.query("SELECT * FROM promos WHERE code=?", (code,))
+    if not rows:
+        return 404, {"error": "not_found"}
+    promo = rows[0]
+
+    used = db.query("SELECT 1 AS ok FROM promo_uses WHERE code=? AND uid=?", (code, uid))
+    if used:
+        return 409, {"error": "already_used"}
+    if (promo.get("used") or 0) >= (promo.get("max_uses") or 0):
+        return 409, {"error": "exhausted"}
+
     ts = now()
+    db.query("INSERT INTO promo_uses(code, uid, ts) VALUES(?,?,?)", (code, uid, ts))
+    db.query("UPDATE promos SET used=used+1 WHERE code=?", (code,))
 
-    with tx() as db:
-        promo = db.execute("SELECT * FROM promos WHERE code=?", (code,)).fetchone()
-        if promo is None:
-            return 404, {"error": "not_found"}
-        used = db.execute(
-            "SELECT 1 FROM promo_uses WHERE code=? AND uid=?", (code, uid)
-        ).fetchone()
-        if used:
-            return 409, {"error": "already_used"}
-        if promo["used"] >= promo["max_uses"]:
-            return 409, {"error": "exhausted"}
+    if promo["kind"] == "stars":
+        db.query("UPDATE users SET stars=stars+? WHERE uid=?", (promo["amount"], uid))
+    else:
+        db.query("UPDATE users SET coins=coins+? WHERE uid=?", (promo["amount"], uid))
 
-        db.execute("INSERT INTO promo_uses(code, uid, ts) VALUES(?,?,?)", (code, uid, ts))
-        db.execute("UPDATE promos SET used=used+1 WHERE code=?", (code,))
-        if promo["kind"] == "stars":
-            db.execute("UPDATE users SET stars=stars+? WHERE uid=?", (promo["amount"], uid))
-        else:
-            db.execute("UPDATE users SET coins=coins+? WHERE uid=?", (promo["amount"], uid))
-
-        row = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
-
+    row = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))[0]
     return 200, {
         "ok": True,
         "code": code,
         "kind": promo["kind"],
         "amount": promo["amount"],
-        "stars": row["stars"],
-        "coins": row["coins"],
+        "stars": row.get("stars") or 0,
+        "coins": row.get("coins") or 0,
     }
 
 
@@ -302,14 +321,14 @@ def withdraw(uid, item_id):
         item_id = int(item_id)
     except (TypeError, ValueError):
         return 400, {"error": "bad_id"}
-    with tx() as db:
-        row = db.execute(
-            "SELECT id, gift, price FROM inventory WHERE id=? AND uid=?", (item_id, uid)
-        ).fetchone()
-        if row is None:
-            return 404, {"error": "not_found"}
-        db.execute("DELETE FROM inventory WHERE id=?", (item_id,))
-    return 200, {"ok": True, "gift": row["gift"], "inventory": inventory_of(uid)}
+
+    db = backend()
+    rows = db.query("SELECT id, gift, price FROM inventory WHERE id=? AND uid=?", (item_id, uid))
+    if not rows:
+        return 404, {"error": "not_found"}
+
+    db.query("DELETE FROM inventory WHERE id=? AND uid=?", (item_id, uid))
+    return 200, {"ok": True, "gift": rows[0]["gift"], "inventory": inventory_of(uid)}
 
 
 def exchange(uid, coins):
@@ -319,49 +338,61 @@ def exchange(uid, coins):
         return 400, {"error": "bad_amount"}
     if coins < EXCHANGE_RATE:
         return 400, {"error": "too_small"}
+
     stars = coins // EXCHANGE_RATE
     spent = stars * EXCHANGE_RATE
-    with tx() as db:
-        row = db.execute("SELECT coins FROM users WHERE uid=?", (uid,)).fetchone()
-        if row is None:
-            return 401, {"error": "no_user"}
-        if row["coins"] < spent:
-            return 402, {"error": "no_money"}
-        db.execute("UPDATE users SET coins=coins-?, stars=stars+? WHERE uid=?", (spent, stars, uid))
-        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
-    return 200, {"ok": True, "stars": after["stars"], "coins": after["coins"], "spent": spent}
+
+    db = backend()
+    rows = db.query("SELECT coins FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    if (rows[0].get("coins") or 0) < spent:
+        return 402, {"error": "no_money"}
+
+    db.query("UPDATE users SET coins=coins-?, stars=stars+? WHERE uid=?", (spent, stars, uid))
+    after = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))[0]
+    return 200, {
+        "ok": True,
+        "stars": after.get("stars") or 0,
+        "coins": after.get("coins") or 0,
+        "spent": spent,
+    }
 
 
 def wheel_spin(uid):
-    """Крутит колесо на сервере: 3 бесплатных спина в день, дальше 10 ⭐."""
+    """3 бесплатных прокрута в день, дальше 10 ⭐."""
     day = today()
-    with tx() as db:
-        row = db.execute(
-            "SELECT stars, coins, wheel_date, wheel_used FROM users WHERE uid=?", (uid,)
-        ).fetchone()
-        if row is None:
-            return 401, {"error": "no_user"}
+    db = backend()
+    rows = db.query("SELECT stars, coins, wheel_date, wheel_used FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    row = rows[0]
 
-        used = row["wheel_used"] if row["wheel_date"] == day else 0
-        paid = used >= FREE_SPINS
-        if paid and row["stars"] < PAID_SPIN_COST:
-            return 402, {"error": "no_money", "need": PAID_SPIN_COST, "stars": row["stars"]}
+    used = row.get("wheel_used") or 0
+    if row.get("wheel_date") != day:
+        used = 0
+    paid = used >= FREE_SPINS
+    stars = row.get("stars") or 0
+    coins = row.get("coins") or 0
 
-        index = int.from_bytes(os.urandom(4), "big") % len(WHEEL_PRIZES)
-        prize = WHEEL_PRIZES[index]
+    if paid and stars < PAID_SPIN_COST:
+        return 402, {"error": "no_money", "need": PAID_SPIN_COST, "stars": stars}
 
-        stars = row["stars"] - (PAID_SPIN_COST if paid else 0)
-        coins = row["coins"]
-        if prize["type"] == "stars":
-            stars += prize["value"]
-        elif prize["type"] == "coins":
-            coins += prize["value"]
+    index = int.from_bytes(os.urandom(4), "big") % len(WHEEL_PRIZES)
+    prize = WHEEL_PRIZES[index]
 
-        new_used = used if paid else used + 1
-        db.execute(
-            "UPDATE users SET stars=?, coins=?, wheel_date=?, wheel_used=? WHERE uid=?",
-            (stars, coins, day, new_used, uid),
-        )
+    if paid:
+        stars -= PAID_SPIN_COST
+    if prize["type"] == "stars":
+        stars += prize["value"]
+    elif prize["type"] == "coins":
+        coins += prize["value"]
+
+    new_used = used if paid else used + 1
+    db.query(
+        "UPDATE users SET stars=?, coins=?, wheel_date=?, wheel_used=? WHERE uid=?",
+        (stars, coins, day, new_used, uid),
+    )
 
     return 200, {
         "index": index,
@@ -369,12 +400,11 @@ def wheel_spin(uid):
         "stars": stars,
         "coins": coins,
         "spins_left": max(0, FREE_SPINS - new_used),
-        "paid": paid
+        "paid": paid,
     }
 
 
 def farm_sell(uid, amount):
-    """Продажа продуктов с фермы: начисляет монеты на сервере."""
     try:
         amount = int(amount)
     except (TypeError, ValueError):
@@ -382,18 +412,15 @@ def farm_sell(uid, amount):
     if amount <= 0 or amount > MAX_FARM_AMOUNT:
         return 400, {"error": "bad_amount"}
 
-    with tx() as db:
-        row = db.execute("SELECT coins FROM users WHERE uid=?", (uid,)).fetchone()
-        if row is None:
-            return 401, {"error": "no_user"}
-        db.execute("UPDATE users SET coins=coins+? WHERE uid=?", (amount, uid))
-        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
-
-    return 200, {"ok": True, "coins": after["coins"], "stars": after["stars"]}
+    db = backend()
+    db.query("UPDATE users SET coins=coins+? WHERE uid=?", (amount, uid))
+    rows = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    return 200, {"ok": True, "coins": rows[0].get("coins") or 0, "stars": rows[0].get("stars") or 0}
 
 
 def farm_buy(uid, amount):
-    """Покупки в ферме (животные, загоны, грядки): списывает монеты на сервере."""
     try:
         amount = int(amount)
     except (TypeError, ValueError):
@@ -401,54 +428,55 @@ def farm_buy(uid, amount):
     if amount <= 0 or amount > MAX_FARM_AMOUNT:
         return 400, {"error": "bad_amount"}
 
-    with tx() as db:
-        row = db.execute("SELECT coins FROM users WHERE uid=?", (uid,)).fetchone()
-        if row is None:
-            return 401, {"error": "no_user"}
-        if row["coins"] < amount:
-            return 402, {"error": "no_money", "coins": row["coins"]}
-        db.execute("UPDATE users SET coins=coins-? WHERE uid=?", (amount, uid))
-        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
+    db = backend()
+    rows = db.query("SELECT coins FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    if (rows[0].get("coins") or 0) < amount:
+        return 402, {"error": "no_money", "coins": rows[0].get("coins") or 0}
 
-    return 200, {"ok": True, "coins": after["coins"], "stars": after["stars"]}
+    db.query("UPDATE users SET coins=coins-? WHERE uid=?", (amount, uid))
+    after = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))[0]
+    return 200, {"ok": True, "coins": after.get("coins") or 0, "stars": after.get("stars") or 0}
 
 
 def create_invoice(uid, stars, payload):
-    with tx() as db:
-        db.execute(
-            "INSERT INTO invoices(uid, stars, payload, status, created) VALUES(?,?,?,?,?)",
-            (uid, stars, payload, "pending", now()),
-        )
+    backend().query(
+        "INSERT INTO invoices(uid, stars, payload, status, created) VALUES(?,?,?,?,?)",
+        (uid, stars, payload, "pending", now()),
+    )
     return True
 
 
 def invoice_by_payload(payload):
-    return conn().execute("SELECT * FROM invoices WHERE payload=?", (payload,)).fetchone()
+    rows = backend().query("SELECT * FROM invoices WHERE payload=?", (payload,))
+    return rows[0] if rows else None
 
 
 def mark_invoice_paid(payload, charge_id):
-    """Идемпотентно начисляет звёзды за оплаченный счёт."""
-    with tx() as db:
-        row = db.execute("SELECT * FROM invoices WHERE payload=?", (payload,)).fetchone()
-        if row is None or row["status"] == "paid":
-            return None
-        db.execute(
-            "UPDATE invoices SET status='paid', charge_id=? WHERE payload=?", (charge_id, payload)
-        )
-        db.execute("UPDATE users SET stars=stars+? WHERE uid=?", (row["stars"], row["uid"]))
-        after = db.execute("SELECT stars, coins FROM users WHERE uid=?", (row["uid"],)).fetchone()
+    db = backend()
+    rows = db.query("SELECT * FROM invoices WHERE payload=?", (payload,))
+    if not rows:
+        return None
+    invoice = rows[0]
+    if invoice.get("status") == "paid":
+        return None
+
+    db.query("UPDATE invoices SET status='paid', charge_id=? WHERE payload=?", (charge_id, payload))
+    db.query("UPDATE users SET stars=stars+? WHERE uid=?", (invoice["stars"], invoice["uid"]))
+    after = db.query("SELECT stars, coins FROM users WHERE uid=?", (invoice["uid"],))[0]
     return {
-        "uid": row["uid"],
-        "amount": row["stars"],
-        "stars": after["stars"],
-        "coins": after["coins"],
+        "uid": invoice["uid"],
+        "amount": invoice["stars"],
+        "stars": after.get("stars") or 0,
+        "coins": after.get("coins") or 0,
     }
 
 
 def dev_grant(uid, stars=0, coins=0):
-    with tx() as db:
-        db.execute(
-            "UPDATE users SET stars=stars+?, coins=coins+? WHERE uid=?", (stars, coins, uid)
-        )
-        row = db.execute("SELECT stars, coins FROM users WHERE uid=?", (uid,)).fetchone()
-    return 200, {"ok": True, "stars": row["stars"], "coins": row["coins"]}
+    db = backend()
+    db.query("UPDATE users SET stars=stars+?, coins=coins+? WHERE uid=?", (stars, coins, uid))
+    rows = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    return 200, {"ok": True, "stars": rows[0].get("stars") or 0, "coins": rows[0].get("coins") or 0}

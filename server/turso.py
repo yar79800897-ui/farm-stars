@@ -1,0 +1,96 @@
+"""Минимальный клиент Turso (libSQL) по HTTP — без внешних зависимостей."""
+
+import json
+import urllib.error
+import urllib.request
+
+
+def _encode(value):
+    if value is None:
+        return {"type": "null"}
+    if isinstance(value, bool):
+        return {"type": "integer", "value": "1" if value else "0"}
+    if isinstance(value, int):
+        return {"type": "integer", "value": str(value)}
+    if isinstance(value, float):
+        return {"type": "real", "value": value}
+    return {"type": "text", "value": str(value)}
+
+
+def _decode(value):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        kind = value.get("type")
+        if kind == "null":
+            return None
+        if kind == "integer":
+            return int(value.get("value") or 0)
+        if kind == "real":
+            return float(value.get("value") or 0)
+        return value.get("value")
+    return value
+
+
+class TursoError(RuntimeError):
+    pass
+
+
+class TursoClient:
+    def __init__(self, url, token, timeout=25):
+        self.url = (url or "").strip().rstrip("/")
+        if self.url.startswith("libsql://"):
+            self.url = "https://" + self.url[len("libsql://"):]
+        self.token = (token or "").strip()
+        self.timeout = timeout
+
+    def _post(self, payload):
+        request = urllib.request.Request(
+            self.url + "/v2/pipeline",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": "Bearer " + self.token,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8")[:300]
+            except Exception:
+                pass
+            raise TursoError("turso http {}: {}".format(exc.code, detail))
+        except Exception as exc:
+            raise TursoError("turso network: {}".format(exc))
+
+    def execute(self, sql, params=()):
+        payload = {
+            "requests": [
+                {"type": "execute", "stmt": {"sql": sql, "args": [_encode(p) for p in (params or ())]}},
+                {"type": "close"},
+            ]
+        }
+        data = self._post(payload)
+        results = data.get("results") or []
+        if not results:
+            raise TursoError("turso: пустой ответ")
+
+        first = results[0]
+        if first.get("type") != "ok":
+            error = first.get("error") or {}
+            raise TursoError("turso: {} {}".format(error.get("code"), error.get("message")))
+
+        response = first.get("response") or {}
+        result = response.get("result") or {}
+        columns = [column.get("name") for column in (result.get("cols") or [])]
+        rows = []
+        for raw in (result.get("rows") or []):
+            rows.append({
+                columns[i] if i < len(columns) else str(i): _decode(value)
+                for i, value in enumerate(raw)
+            })
+        return rows

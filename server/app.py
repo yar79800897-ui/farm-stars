@@ -99,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
                 "gifts": len(store.CATALOGUE),
                 "auth": bool(tgauth.BOT_TOKEN),
                 "guest": ALLOW_GUEST,
+                "db": store.backend_name(),
             })
 
         if path == "/api/me":
