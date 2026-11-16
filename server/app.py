@@ -280,6 +280,10 @@ def main():
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Farm Stars server on http://0.0.0.0:{} (gifts: {}, bot token: {})".format(
         PORT, len(store.CATALOGUE), "yes" if tgauth.BOT_TOKEN else "no"))
+    try:
+        print("db backend:", store.backend_name())
+    except Exception as exc:
+        print("db backend error:", exc)
     register_webhook()
     httpd.serve_forever()
 
