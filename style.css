@@ -2033,3 +2033,223 @@ h2 {
     color: #8e9297;
     text-align: center;
 }
+
+/* ==========================================================================
+   ШАШКИ
+   ========================================================================== */
+#screen-checkers.active {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    background-color: #0b0c0e;
+    overflow: hidden;
+}
+
+#screen-checkers .crash-head h2 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.checkers-clock {
+    margin-left: auto;
+    padding: 5px 10px;
+    border-radius: 20px;
+    border: 1px solid #242933;
+    background-color: #13151a;
+    font-size: 13px;
+    font-weight: 800;
+    color: #8e9297;
+}
+
+.checkers-lobby {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 430px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.checkers-sub {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: #8e9297;
+}
+
+.checkers-label {
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #8e9297;
+}
+
+.checkers-input {
+    width: 100%;
+    padding: 13px 14px;
+    border-radius: 14px;
+    border: 1px solid #242933;
+    background-color: #12141a;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 800;
+    outline: none;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.checkers-input:focus {
+    border-color: #ccff00;
+}
+
+.checkers-times {
+    display: flex;
+    gap: 8px;
+}
+
+.time-btn {
+    flex: 1;
+    padding: 11px;
+    border-radius: 14px;
+    border: 1px solid #242933;
+    background-color: #181b22;
+    color: #8e9297;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.time-btn.active {
+    border-color: #ccff00;
+    background-color: rgba(204, 255, 0, 0.1);
+    color: #ccff00;
+}
+
+.checkers-status {
+    min-height: 18px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #ccff00;
+    text-align: center;
+}
+
+.checkers-game {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkers-game.hidden-game {
+    display: none;
+}
+
+.checkers-players {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(100%, 430px);
+    font-size: 13px;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+.checkers-timer {
+    padding: 4px 10px;
+    border-radius: 12px;
+    background-color: #13151a;
+    border: 1px solid #242933;
+    font-size: 13px;
+    font-weight: 800;
+    color: #8e9297;
+}
+
+.checkers-timer.active {
+    color: #ccff00;
+    border-color: rgba(204, 255, 0, 0.4);
+}
+
+.checkers-board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: min(100%, 55vh, 430px);
+    aspect-ratio: 1 / 1;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #242933;
+}
+
+.checkers-board .cell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: default;
+}
+
+.checkers-board .cell.light {
+    background-color: #22262e;
+}
+
+.checkers-board .cell.dark {
+    background-color: #12151a;
+}
+
+.checkers-board .cell.dark.playable {
+    cursor: pointer;
+}
+
+.checkers-board .cell.selected {
+    box-shadow: inset 0 0 0 2px #ccff00;
+}
+
+.checkers-board .cell.target::after {
+    content: "";
+    width: 26%;
+    height: 26%;
+    border-radius: 50%;
+    background-color: rgba(204, 255, 0, 0.55);
+}
+
+.checkers-board .piece {
+    width: 74%;
+    height: 74%;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.checkers-board .piece.white {
+    background: radial-gradient(circle at 35% 30%, #ffffff, #cfd3da);
+    border: 1px solid #8f959e;
+    color: #2a2d33;
+}
+
+.checkers-board .piece.black {
+    background: radial-gradient(circle at 35% 30%, #4a4f59, #15171b);
+    border: 1px solid #0a0b0d;
+    color: #f3f4f6;
+}
+
+.checkers-actions {
+    display: flex;
+    gap: 8px;
+    width: min(100%, 430px);
+}
+
+.checkers-actions .btn-secondary {
+    padding: 11px;
+    font-size: 13px;
+}

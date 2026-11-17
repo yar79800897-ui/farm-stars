@@ -1633,6 +1633,313 @@ document.addEventListener("DOMContentLoaded", () => {
 
     updateExchangePreview();
 
+    // ==========================================================================
+    // 7. ШАШКИ: игра со ставкой
+    // ==========================================================================
+    const CHECKERS_MIN_BET = 10;
+    const checkersLobby = document.getElementById("checkers-lobby");
+    const checkersGameBox = document.getElementById("checkers-game");
+    const checkersBoardEl = document.getElementById("checkers-board");
+    const checkersBetInput = document.getElementById("checkers-bet");
+    const checkersStatusLobby = document.getElementById("checkers-status");
+    const checkersStatusGame = document.getElementById("checkers-status2");
+    const checkersOpponentEl = document.getElementById("checkers-opponent");
+    const checkersMeEl = document.getElementById("checkers-me");
+    const checkersTimerMe = document.getElementById("checkers-timer-me");
+    const checkersTimerOpponent = document.getElementById("checkers-timer-opponent");
+    const checkersClock = document.getElementById("checkers-clock");
+    const checkersCells = [];
+
+    let checkersMinutes = 5;
+    let checkersGame = null;
+    let checkersSelected = null;
+    let checkersPollTimer = null;
+    let checkersBotTimer = null;
+
+    function checkersSetStatus(text, color) {
+        const box = checkersGameBox && !checkersGameBox.classList.contains("hidden-game")
+            ? checkersStatusGame
+            : checkersStatusLobby;
+        if (!box) return;
+        box.textContent = text;
+        box.style.color = color || "#ccff00";
+    }
+
+    function formatClock(ms) {
+        const total = Math.max(0, Math.floor(ms / 1000));
+        return Math.floor(total / 60) + ":" + String(total % 60).padStart(2, "0");
+    }
+
+    function buildCheckersBoard() {
+        if (!checkersBoardEl || checkersCells.length) return;
+        for (let index = 0; index < 64; index++) {
+            const cell = document.createElement("div");
+            cell.className = "cell";
+            cell.addEventListener("click", () => onCheckersCell(Number(cell.dataset.index)));
+            checkersBoardEl.appendChild(cell);
+            checkersCells.push(cell);
+        }
+    }
+
+    function renderCheckers() {
+        const game = checkersGame;
+        if (!game) return;
+
+        const flip = game.myColor === "black";
+        const moves = game.moves || [];
+        const myKey = game.myColor === "white" ? "whiteMs" : "blackMs";
+        const otherKey = game.myColor === "white" ? "blackMs" : "whiteMs";
+
+        checkersOpponentEl.textContent = game.myColor === "white"
+            ? (game.blackName || "Соперник")
+            : (game.whiteName || "Соперник");
+        checkersMeEl.textContent = "Вы";
+
+        checkersTimerMe.textContent = formatClock(game[myKey]);
+        checkersTimerOpponent.textContent = formatClock(game[otherKey]);
+        checkersTimerMe.classList.toggle("active", game.status === "active" && game.turn === game.myColor);
+        checkersTimerOpponent.classList.toggle("active", game.status === "active" && game.turn !== game.myColor);
+
+        checkersClock.hidden = false;
+        checkersClock.textContent = game.status !== "active"
+            ? "Партия окончена"
+            : (game.turn === game.myColor ? "Ваш ход" : "Ход соперника");
+
+        for (let display = 0; display < 64; display++) {
+            const row = Math.floor(display / 8);
+            const col = display % 8;
+            const actual = flip ? (7 - row) * 8 + (7 - col) : display;
+            const cell = checkersCells[display];
+            const piece = game.board[actual];
+            const dark = (Math.floor(actual / 8) + (actual % 8)) % 2 === 1;
+
+            cell.className = "cell " + (dark ? "dark" : "light");
+            cell.dataset.index = String(actual);
+            cell.innerHTML = "";
+            if (!dark) continue;
+
+            const mine = (piece === "w" || piece === "W")
+                ? game.myColor === "white"
+                : (piece === "b" || piece === "B") ? game.myColor === "black" : false;
+
+            if (mine && game.status === "active" && game.turn === game.myColor) {
+                cell.classList.add("playable");
+            }
+
+            if (piece !== ".") {
+                const chip = document.createElement("span");
+                chip.className = "piece " + (piece === "w" || piece === "W" ? "white" : "black");
+                if (piece === "W" || piece === "B") chip.textContent = "♛";
+                cell.appendChild(chip);
+            }
+
+            if (checkersSelected !== null) {
+                if (actual === checkersSelected) cell.classList.add("selected");
+                if (moves.some(move => move.from === checkersSelected && move.to === actual)) {
+                    cell.classList.add("target");
+                }
+            }
+        }
+
+        if (game.status === "finished") {
+            const text = game.winner === "draw"
+                ? "Ничья — ставки возвращены"
+                : (game.winner === game.myColor ? "Вы выиграли!" : "Вы проиграли");
+            checkersSetStatus(text, game.winner === game.myColor ? "#ccff00" : "#ff3838");
+        } else if (game.status === "waiting") {
+            checkersSetStatus("Ищем соперника... если никого не будет, через 30 секунд подключим бота.", "#8e9297");
+        }
+    }
+
+    async function onCheckersCell(index) {
+        const game = checkersGame;
+        if (!game || game.status !== "active" || game.turn !== game.myColor) return;
+        if (Number.isNaN(index)) return;
+
+        const moves = game.moves || [];
+        const isTarget = checkersSelected !== null && moves.some(m => m.from === checkersSelected && m.to === index);
+
+        if (isTarget) {
+            const from = checkersSelected;
+            checkersSelected = null;
+            try {
+                checkersGame = await api("/api/checkers/move", {
+                    method: "POST",
+                    body: JSON.stringify({ id: game.id, from: from, to: index })
+                });
+                renderCheckers();
+            } catch (error) {
+                checkersSetStatus("Ход не принят. Попробуй другой.", "#ff3838");
+                renderCheckers();
+            }
+            return;
+        }
+
+        const piece = game.board[index];
+        const mine = (piece === "w" || piece === "W")
+            ? game.myColor === "white"
+            : (piece === "b" || piece === "B") ? game.myColor === "black" : false;
+
+        checkersSelected = mine ? index : null;
+        renderCheckers();
+    }
+
+    function stopCheckersPolling() {
+        if (checkersPollTimer) {
+            clearInterval(checkersPollTimer);
+            checkersPollTimer = null;
+        }
+    }
+
+    function stopCheckersBot() {
+        if (checkersBotTimer) {
+            clearTimeout(checkersBotTimer);
+            checkersBotTimer = null;
+        }
+    }
+
+    function startCheckersPolling() {
+        stopCheckersPolling();
+        checkersPollTimer = setInterval(async () => {
+            if (!checkersGame) return;
+            try {
+                const state = await api("/api/checkers/game?id=" + checkersGame.id);
+                checkersGame = state;
+                renderCheckers();
+                if (state.status !== "active") stopCheckersPolling();
+            } catch (error) {
+                // тихо: следующий опрос попробует снова
+            }
+        }, 1500);
+    }
+
+    function enterCheckersGame(game) {
+        checkersGame = game;
+        checkersSelected = null;
+        if (checkersLobby) checkersLobby.classList.add("hidden-game");
+        if (checkersGameBox) checkersGameBox.classList.remove("hidden-game");
+        buildCheckersBoard();
+        renderCheckers();
+        if (game.status === "active") {
+            checkersSetStatus(game.turn === game.myColor ? "Твой ход" : "Ход соперника", "#8e9297");
+        } else if (game.status === "waiting") {
+            checkersSetStatus("Ищем соперника... через 30 секунд подключим бота.", "#8e9297");
+        }
+    }
+
+    function resetCheckers() {
+        stopCheckersPolling();
+        stopCheckersBot();
+        checkersGame = null;
+        checkersSelected = null;
+        if (checkersGameBox) checkersGameBox.classList.add("hidden-game");
+        if (checkersLobby) checkersLobby.classList.remove("hidden-game");
+        if (checkersClock) checkersClock.hidden = true;
+        checkersSetStatus("", "#ccff00");
+    }
+
+    async function startCheckersGame() {
+        const bet = Math.floor(Number(checkersBetInput ? checkersBetInput.value : 0));
+        if (!Number.isFinite(bet) || bet < CHECKERS_MIN_BET) {
+            checkersSetStatus("Минимальная ставка — " + CHECKERS_MIN_BET + " ⭐", "#ff3838");
+            return;
+        }
+
+        checkersSetStatus("Создаём игру...", "#8e9297");
+        let game;
+        try {
+            game = await api("/api/checkers/start", {
+                method: "POST",
+                body: JSON.stringify({ bet: bet, minutes: checkersMinutes })
+            });
+        } catch (error) {
+            if (error.status === 402) checkersSetStatus("Недостаточно звёзд для этой ставки.", "#ff3838");
+            else if (error.status === 401) checkersSetStatus("Открой приложение через Telegram ⭐", "#ff3838");
+            else checkersSetStatus("Сервер не ответил. Попробуй ещё раз.", "#ff3838");
+            return;
+        }
+
+        enterCheckersGame(game);
+
+        if (game.status === "waiting") {
+            checkersSetStatus("Ищем соперника... если никого не будет, через 30 секунд подключим бота.", "#8e9297");
+            checkersBotTimer = setTimeout(async () => {
+                try {
+                    const withBot = await api("/api/checkers/bot", {
+                        method: "POST",
+                        body: JSON.stringify({ id: game.id })
+                    });
+                    enterCheckersGame(withBot);
+                    checkersSetStatus("Соперник — сильный бот. Твой ход!", "#ccff00");
+                } catch (error) {
+                    checkersSetStatus("Не удалось подключить бота.", "#ff3838");
+                }
+            }, 30000);
+        }
+
+        startCheckersPolling();
+    }
+
+    const btnOpenCheckers = document.getElementById("btn-open-checkers");
+    const btnCheckersBack = document.getElementById("btn-checkers-back");
+    const btnCheckersPlay = document.getElementById("btn-checkers-play");
+    const btnCheckersResign = document.getElementById("btn-checkers-resign");
+    const btnCheckersDraw = document.getElementById("btn-checkers-draw");
+
+    if (btnOpenCheckers) {
+        btnOpenCheckers.addEventListener("click", () => {
+            switchToScreen("screen-checkers");
+            resetCheckers();
+        });
+    }
+    if (btnCheckersBack) {
+        btnCheckersBack.addEventListener("click", () => {
+            stopCheckersPolling();
+            switchToScreen("screen-games", "screen-games");
+        });
+    }
+    if (btnCheckersPlay) btnCheckersPlay.addEventListener("click", startCheckersGame);
+
+    document.querySelectorAll(".time-btn").forEach(button => {
+        button.addEventListener("click", () => {
+            document.querySelectorAll(".time-btn").forEach(item => item.classList.remove("active"));
+            button.classList.add("active");
+            checkersMinutes = Number(button.dataset.minutes) || 5;
+        });
+    });
+
+    if (btnCheckersResign) {
+        btnCheckersResign.addEventListener("click", async () => {
+            if (!checkersGame) return;
+            try {
+                checkersGame = await api("/api/checkers/resign", {
+                    method: "POST",
+                    body: JSON.stringify({ id: checkersGame.id })
+                });
+                renderCheckers();
+                stopCheckersPolling();
+            } catch (error) {
+                checkersSetStatus("Не удалось сдаться. Попробуй ещё раз.", "#ff3838");
+            }
+        });
+    }
+
+    if (btnCheckersDraw) {
+        btnCheckersDraw.addEventListener("click", async () => {
+            if (!checkersGame) return;
+            try {
+                checkersGame = await api("/api/checkers/draw", {
+                    method: "POST",
+                    body: JSON.stringify({ id: checkersGame.id })
+                });
+                renderCheckers();
+                stopCheckersPolling();
+            } catch (error) {
+                checkersSetStatus("Соперник против ничьей или партия уже закончилась.", "#ff3838");
+            }
+        });
+    }
+
     renderGiftsLine();
     updateCenterGift();
     updateChanceUI();

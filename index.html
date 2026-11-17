@@ -47,6 +47,13 @@
                             <p>Настрой шанс и выбей подарок из Telegram</p>
                         </div>
                     </div>
+                    <div class="game-card clickable" id="btn-open-checkers">
+                        <div class="game-icon">⚪</div>
+                        <div class="game-info-text">
+                            <h3>Шашки на звёзды</h3>
+                            <p>Играй с людьми или сильным ботом — победитель забирает ставку</p>
+                        </div>
+                    </div>
                     <div class="game-card clickable" id="btn-open-wheel">
                         <div class="game-icon">🎡</div>
                         <div class="game-info-text">
@@ -145,6 +152,44 @@
                         <input type="text" id="picker-search" placeholder="Поиск подарков..." autocomplete="off">
                     </div>
                     <div class="picker-grid" id="picker-grid"></div>
+                </div>
+            </section>
+
+            <!-- ВКЛАДКА: ШАШКИ -->
+            <section id="screen-checkers" class="screen">
+                <div class="crash-head">
+                    <button class="picker-back" id="btn-checkers-back" aria-label="Назад">‹</button>
+                    <h2>Шашки</h2>
+                    <span class="checkers-clock" id="checkers-clock" hidden>5:00</span>
+                </div>
+
+                <div class="checkers-lobby" id="checkers-lobby">
+                    <p class="checkers-sub">Победитель получает 90% банка, 10% — комиссия платформы. Ничья — ставки возвращаются.</p>
+                    <label class="checkers-label" for="checkers-bet">Ставка, ⭐</label>
+                    <input id="checkers-bet" class="checkers-input" type="number" min="10" step="10" value="10" inputmode="numeric">
+                    <div class="checkers-times">
+                        <button class="time-btn active" data-minutes="5">5 минут</button>
+                        <button class="time-btn" data-minutes="10">10 минут</button>
+                    </div>
+                    <button class="btn-action" id="btn-checkers-play">Играть</button>
+                    <p id="checkers-status" class="checkers-status"></p>
+                </div>
+
+                <div class="checkers-game hidden-game" id="checkers-game">
+                    <div class="checkers-players">
+                        <span id="checkers-opponent">Соперник</span>
+                        <span id="checkers-timer-opponent" class="checkers-timer">5:00</span>
+                    </div>
+                    <div id="checkers-board" class="checkers-board"></div>
+                    <div class="checkers-players">
+                        <span id="checkers-me">Вы</span>
+                        <span id="checkers-timer-me" class="checkers-timer">5:00</span>
+                    </div>
+                    <div class="checkers-actions">
+                        <button class="btn-secondary" id="btn-checkers-draw">Ничья</button>
+                        <button class="btn-secondary" id="btn-checkers-resign">Сдаться</button>
+                    </div>
+                    <p id="checkers-status2" class="checkers-status"></p>
                 </div>
             </section>
 
