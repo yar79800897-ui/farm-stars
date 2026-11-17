@@ -83,16 +83,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
-        if path.startswith("/api/"):
-            return self._api_get(path)
-        return self._static(path)
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            return self._api_get(parsed.path, urllib.parse.parse_qs(parsed.query))
+        return self._static(parsed.path)
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
         return self._api_post(path)
 
-    def _api_get(self, path):
+    def _api_get(self, path, query=None):
+        query = query or {}
         if path == "/api/health":
             return self._json(200, {
                 "ok": True,
@@ -110,11 +111,50 @@ class Handler(BaseHTTPRequestHandler):
             payload["inventory"] = store.inventory_of(uid)
             return self._json(200, payload)
 
+        if path == "/api/checkers/game":
+            uid, row = self._identity()
+            if row is None:
+                return self._json(401, {"error": "unauthorized"})
+            try:
+                game_id = int((query.get("id") or ["0"])[0])
+            except (TypeError, ValueError):
+                return self._json(400, {"error": "bad_id"})
+            status, payload = store.checkers_game_state(uid, game_id)
+            return self._json(status, payload)
+
         return self._json(404, {"error": "not_found"})
 
     def _api_post(self, path):
         if path == "/api/telegram/webhook":
             return self._webhook()
+
+        if path.startswith("/api/checkers/"):
+            uid, row = self._identity()
+            if row is None:
+                return self._json(401, {"error": "unauthorized"})
+            data = self._body()
+
+            if path == "/api/checkers/start":
+                status, payload = store.start_checkers(
+                    uid, row.get("name") or "Игрок", data.get("bet"), data.get("minutes"))
+                return self._json(status, payload)
+
+            try:
+                game_id = int(data.get("id") or 0)
+            except (TypeError, ValueError):
+                return self._json(400, {"error": "bad_id"})
+
+            if path == "/api/checkers/bot":
+                status, payload = store.attach_checkers_bot(uid, game_id)
+            elif path == "/api/checkers/move":
+                status, payload = store.checkers_move(uid, game_id, data.get("from"), data.get("to"))
+            elif path == "/api/checkers/resign":
+                status, payload = store.checkers_resign(uid, game_id)
+            elif path == "/api/checkers/draw":
+                status, payload = store.checkers_draw(uid, game_id)
+            else:
+                return self._json(404, {"error": "not_found"})
+            return self._json(status, payload)
 
         if path == "/api/spin":
             uid, row = self._identity()

@@ -4,6 +4,7 @@ import sqlite3
 import threading
 import time
 
+import checkers
 from turso import TursoClient
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -91,6 +92,29 @@ SCHEMA = [
         created INTEGER NOT NULL
     )""",
     "CREATE INDEX IF NOT EXISTS invoices_uid ON invoices(uid)",
+    """CREATE TABLE IF NOT EXISTS games (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mode TEXT NOT NULL DEFAULT 'checkers',
+        bet INTEGER NOT NULL,
+        minutes INTEGER NOT NULL,
+        white_uid TEXT NOT NULL,
+        white_name TEXT,
+        black_uid TEXT,
+        black_name TEXT,
+        board TEXT NOT NULL,
+        turn TEXT NOT NULL,
+        status TEXT NOT NULL,
+        winner TEXT,
+        white_ms INTEGER NOT NULL,
+        black_ms INTEGER NOT NULL,
+        last_ts INTEGER NOT NULL,
+        w_seen INTEGER NOT NULL,
+        b_seen INTEGER NOT NULL,
+        bot INTEGER NOT NULL DEFAULT 0,
+        created INTEGER NOT NULL,
+        finished INTEGER
+    )""",
+    "CREATE INDEX IF NOT EXISTS games_waiting ON games(status, bet, minutes)",
 ]
 
 
@@ -503,3 +527,258 @@ def dev_grant(uid, stars=0, coins=0):
     if not rows:
         return 401, {"error": "no_user"}
     return 200, {"ok": True, "stars": rows[0].get("stars") or 0, "coins": rows[0].get("coins") or 0}
+
+# ==========================================================================
+# ШАШКИ: игры один на один со ставками
+# ==========================================================================
+
+CHECKERS_MIN_BET = 10
+CHECKERS_MINUTES = (5, 10)
+CHECKERS_COMMISSION = 0.10
+CHECKERS_BOT_UID = "bot"
+CHECKERS_BOT_NAME = "Сильный бот"
+CHECKERS_AWAY = 30
+CHECKERS_BOT_DEPTH = 3
+
+
+def _game(game_id):
+    rows = backend().query("SELECT * FROM games WHERE id=?", (game_id,))
+    return rows[0] if rows else None
+
+
+def _finish_game(game, winner):
+    db = backend()
+    bet = game["bet"] or 0
+    if winner == "draw":
+        if game["black_uid"] and game["black_uid"] != CHECKERS_BOT_UID:
+            db.query("UPDATE users SET stars=stars+? WHERE uid IN (?, ?)", (bet, game["white_uid"], game["black_uid"]))
+        else:
+            db.query("UPDATE users SET stars=stars+? WHERE uid=?", (bet, game["white_uid"]))
+    elif winner:
+        winner_uid = game["white_uid"] if winner == "white" else game["black_uid"]
+        prize = int(bet * 2 * (1 - CHECKERS_COMMISSION))
+        if winner_uid and winner_uid != CHECKERS_BOT_UID:
+            db.query("UPDATE users SET stars=stars+? WHERE uid=?", (prize, winner_uid))
+    db.query("UPDATE games SET status='finished', winner=?, finished=? WHERE id=?",
+             (winner or "", now(), game["id"]))
+
+
+def _clock_left(game):
+    elapsed_ms = max(0, now() - (game["last_ts"] or 0)) * 1000
+    white_ms = game["white_ms"]
+    black_ms = game["black_ms"]
+    if game["status"] == "active":
+        if game["turn"] == "white":
+            white_ms -= elapsed_ms
+        else:
+            black_ms -= elapsed_ms
+    return max(0, white_ms), max(0, black_ms)
+
+
+def checkers_payload(game, uid):
+    side = "white" if game["white_uid"] == uid else "black"
+    white_ms, black_ms = _clock_left(game)
+    moves = []
+    if game["status"] == "active" and game["turn"] == side:
+        moves = [{"from": m["from"], "to": m["path"][-1], "captures": len(m["captured"])}
+                 for m in checkers.legal_moves(game["board"], side)]
+    return {
+        "id": game["id"],
+        "bet": game["bet"],
+        "minutes": game["minutes"],
+        "board": game["board"],
+        "turn": game["turn"],
+        "status": game["status"],
+        "winner": game["winner"] or None,
+        "myColor": side,
+        "bot": bool(game["bot"]),
+        "whiteName": game["white_name"],
+        "blackName": game["black_name"],
+        "whiteMs": max(0, white_ms),
+        "blackMs": max(0, black_ms),
+        "moves": moves,
+    }
+
+
+def start_checkers(uid, name, bet, minutes):
+    try:
+        bet = int(bet)
+        minutes = int(minutes)
+    except (TypeError, ValueError):
+        return 400, {"error": "bad_params"}
+    if bet < CHECKERS_MIN_BET or minutes not in CHECKERS_MINUTES:
+        return 400, {"error": "bad_params"}
+
+    db = backend()
+    rows = db.query("SELECT stars FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    if (rows[0].get("stars") or 0) < bet:
+        return 402, {"error": "no_money"}
+
+    waiting = db.query(
+        "SELECT * FROM games WHERE mode='checkers' AND status='waiting' AND bet=? AND minutes=? "
+        "AND white_uid<>? ORDER BY id LIMIT 1",
+        (bet, minutes, uid),
+    )
+    ts = now()
+    total = minutes * 60000
+
+    db.query("UPDATE users SET stars=stars-? WHERE uid=? AND stars>=?", (bet, uid, bet))
+
+    if waiting:
+        game = waiting[0]
+        db.query(
+            "UPDATE games SET status='active', black_uid=?, black_name=?, white_ms=?, black_ms=?, "
+            "last_ts=?, w_seen=?, b_seen=? WHERE id=?",
+            (uid, name, total, total, ts, ts, ts, game["id"]),
+        )
+        return 200, checkers_payload(_game(game["id"]), uid)
+
+    db.query(
+        "INSERT INTO games(mode, bet, minutes, white_uid, white_name, board, turn, status, "
+        "white_ms, black_ms, last_ts, w_seen, b_seen, created) "
+        "VALUES('checkers',?,?,?,?,?,?, 'waiting',?,?,?,?,?,?)",
+        (bet, minutes, uid, name, checkers.initial_board(), checkers.WHITE,
+         total, total, ts, ts, ts, ts),
+    )
+    gid = db.query("SELECT last_insert_rowid() AS id")[0]["id"]
+    return 200, checkers_payload(_game(gid), uid)
+
+
+def attach_checkers_bot(uid, game_id):
+    game = _game(game_id)
+    if not game:
+        return 404, {"error": "not_found"}
+    if game["status"] != "waiting" or game["white_uid"] != uid:
+        return 409, {"error": "not_waiting"}
+
+    ts = now()
+    backend().query(
+        "UPDATE games SET status='active', black_uid=?, black_name=?, bot=1, last_ts=?, w_seen=?, b_seen=? WHERE id=?",
+        (CHECKERS_BOT_UID, CHECKERS_BOT_NAME, ts, ts, ts, game_id),
+    )
+    return 200, checkers_payload(_game(game_id), uid)
+
+
+def checkers_game_state(uid, game_id):
+    game = _game(game_id)
+    if not game:
+        return 404, {"error": "not_found"}
+    if uid not in (game["white_uid"], game["black_uid"]):
+        return 403, {"error": "not_player"}
+
+    if game["status"] == "active":
+        ts = now()
+        side = "white" if game["white_uid"] == uid else "black"
+        if side == "white":
+            backend().query("UPDATE games SET w_seen=? WHERE id=?", (ts, game_id))
+        else:
+            backend().query("UPDATE games SET b_seen=? WHERE id=?", (ts, game_id))
+        game = _game(game_id)
+
+        if not game["bot"]:
+            opponent_seen = game["b_seen"] if side == "white" else game["w_seen"]
+            if ts - (opponent_seen or 0) > CHECKERS_AWAY:
+                _finish_game(game, side)
+                game = _game(game_id)
+
+        if game["status"] == "active":
+            white_ms, black_ms = _clock_left(game)
+            if white_ms <= 0:
+                _finish_game(game, "black")
+                game = _game(game_id)
+            elif black_ms <= 0:
+                _finish_game(game, "white")
+                game = _game(game_id)
+
+    return 200, checkers_payload(game, uid)
+
+
+def checkers_move(uid, game_id, start, target):
+    game = _game(game_id)
+    if not game:
+        return 404, {"error": "not_found"}
+    if game["status"] != "active":
+        return 409, {"error": "not_active"}
+
+    side = "white" if game["white_uid"] == uid else ("black" if game["black_uid"] == uid else None)
+    if side is None:
+        return 403, {"error": "not_player"}
+    if game["turn"] != side:
+        return 409, {"error": "not_your_turn"}
+
+    try:
+        start = int(start)
+        target = int(target)
+    except (TypeError, ValueError):
+        return 400, {"error": "bad_move"}
+
+    options = [m for m in checkers.legal_moves(game["board"], side)
+               if m["from"] == start and m["path"][-1] == target]
+    if not options:
+        return 400, {"error": "illegal_move"}
+    move = options[0]
+
+    elapsed_ms = max(0, now() - (game["last_ts"] or 0)) * 1000
+    white_ms, black_ms = game["white_ms"], game["black_ms"]
+    if side == "white":
+        white_ms -= elapsed_ms
+    else:
+        black_ms -= elapsed_ms
+
+    if white_ms <= 0 or black_ms <= 0:
+        _finish_game(game, "black" if white_ms <= 0 else "white")
+        return 200, checkers_payload(_game(game_id), uid)
+
+    board = checkers.apply_move(game["board"], move)
+    turn = checkers.other(side)
+    ts = now()
+    db = backend()
+    db.query(
+        "UPDATE games SET board=?, turn=?, white_ms=?, black_ms=?, last_ts=? WHERE id=?",
+        (board, turn, white_ms, black_ms, ts, game_id),
+    )
+
+    if game["bot"] and turn == "black":
+        bot_move = checkers.best_bot_move(board, "black", CHECKERS_BOT_DEPTH)
+        if bot_move:
+            board = checkers.apply_move(board, bot_move)
+            turn = "white"
+            db.query("UPDATE games SET board=?, turn=?, last_ts=? WHERE id=?",
+                     (board, turn, now(), game_id))
+
+    finished = checkers.winner(board, turn)
+    if finished:
+        _finish_game(_game(game_id), finished)
+
+    return 200, checkers_payload(_game(game_id), uid)
+
+
+def checkers_resign(uid, game_id):
+    game = _game(game_id)
+    if not game:
+        return 404, {"error": "not_found"}
+    if game["status"] != "active":
+        return 409, {"error": "not_active"}
+    if uid == game["white_uid"]:
+        _finish_game(game, "black")
+    elif uid == game["black_uid"]:
+        _finish_game(game, "white")
+    else:
+        return 403, {"error": "not_player"}
+    return 200, checkers_payload(_game(game_id), uid)
+
+
+def checkers_draw(uid, game_id):
+    game = _game(game_id)
+    if not game:
+        return 404, {"error": "not_found"}
+    if game["status"] != "active":
+        return 409, {"error": "not_active"}
+    if game["bot"]:
+        return 409, {"error": "bot_declines"}
+    if uid not in (game["white_uid"], game["black_uid"]):
+        return 403, {"error": "not_player"}
+    _finish_game(game, "draw")
+    return 200, checkers_payload(_game(game_id), uid)
