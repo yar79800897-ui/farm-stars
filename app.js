@@ -192,9 +192,25 @@ document.addEventListener("DOMContentLoaded", () => {
         return headers;
     }
 
+    const API_TIMEOUT_MS = 15000;
+
     async function api(path, options) {
-        const opts = Object.assign({ headers: apiHeaders() }, options || {});
-        const response = await fetch(API_BASE + path, opts);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+        const opts = Object.assign({ headers: apiHeaders(), signal: controller.signal }, options || {});
+
+        let response;
+        try {
+            response = await fetch(API_BASE + path, opts);
+        } catch (error) {
+            clearTimeout(timer);
+            const problem = new Error("api network");
+            problem.status = 0;
+            problem.data = {};
+            throw problem;
+        }
+        clearTimeout(timer);
+
         let data = null;
         try {
             data = await response.json();
@@ -927,36 +943,9 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    let crashSpinStartedAt = 0;
-
-    function beginSpinAnimation(giftName) {
+    function playSpinAnimation(won, giftName, giftIndex) {
         isCrashSpinning = true;
         btnBuyUpgradeSpin.disabled = true;
-        crashSpinStartedAt = (window.performance && performance.now) ? performance.now() : Date.now();
-
-        setStatus("Крутим стрелку... Подарок: " + giftName, "#ccff00");
-
-        if (upgradePointer) {
-            upgradePointer.style.transition = "transform 2.6s cubic-bezier(0.15, 0.85, 0.15, 1)";
-            upgradePointer.style.transform = "rotate(" + (360 * 4 + 40 + Math.random() * 60) + "deg)";
-        }
-    }
-
-    function cancelSpinAnimation() {
-        isCrashSpinning = false;
-        btnBuyUpgradeSpin.disabled = false;
-
-        if (upgradePointer) {
-            upgradePointer.style.transition = "none";
-            upgradePointer.style.transform = "rotate(0deg)";
-            void upgradePointer.offsetHeight;
-            upgradePointer.style.transition = "";
-        }
-    }
-
-    function finishSpinAnimation(won, giftName, giftIndex) {
-        const now = (window.performance && performance.now) ? performance.now() : Date.now();
-        const elapsed = Math.max(0, now - crashSpinStartedAt);
 
         // Стрелку ставим именно туда, где нарисован исход
         const winZone = crashChance * 3.6;
@@ -964,11 +953,12 @@ document.addEventListener("DOMContentLoaded", () => {
             ? 8 + Math.random() * Math.max(4, winZone - 16)
             : Math.min(352, winZone + 8 + Math.random() * Math.max(4, 352 - winZone - 8));
 
-        const totalRotation = 360 * 6 + landingAngle;
-        const remaining = Math.max(500, 2800 - elapsed);
+        const totalRotation = 360 * 4 + landingAngle;
+
+        setStatus("Крутим стрелку... Подарок: " + giftName, "#ccff00");
 
         if (upgradePointer) {
-            upgradePointer.style.transition = "transform " + Math.round(remaining) + "ms cubic-bezier(0.15, 0.85, 0.15, 1)";
+            upgradePointer.style.transition = "";
             upgradePointer.style.transform = "rotate(" + totalRotation + "deg)";
         }
 
@@ -994,7 +984,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 void upgradePointer.offsetHeight;
                 upgradePointer.style.transition = "";
             }, 120);
-        }, Math.round(remaining));
+        }, 2900);
     }
 
     if (btnBuyUpgradeSpin) {
@@ -1005,7 +995,8 @@ document.addEventListener("DOMContentLoaded", () => {
             const gift = GIFTS[giftIndex];
 
             if (serverMode) {
-                beginSpinAnimation(gift.name);
+                btnBuyUpgradeSpin.disabled = true;
+                setStatus("Проверяем баланс...", "#ccff00");
                 let result;
                 try {
                     result = await api("/api/spin", {
@@ -1013,7 +1004,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         body: JSON.stringify({ gift: gift.file, chance: crashChance })
                     });
                 } catch (error) {
-                    cancelSpinAnimation();
+                    btnBuyUpgradeSpin.disabled = false;
                     if (error.status === 402) {
                         setStatus("Недостаточно Stars. Пополни баланс ⭐", "#ff3838");
                     } else if (error.status === 401) {
@@ -1024,7 +1015,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     return;
                 }
                 applyServerState(result);
-                startSpinAnimation(!!result.won, gift.name, giftIndex);
+                playSpinAnimation(!!result.won, gift.name, giftIndex);
                 return;
             }
 
@@ -1038,8 +1029,7 @@ document.addEventListener("DOMContentLoaded", () => {
             renderBalances();
             saveWallet();
 
-            beginSpinAnimation(gift.name);
-            finishSpinAnimation(Math.random() * 100 < crashChance, gift.name, giftIndex);
+            playSpinAnimation(Math.random() * 100 < crashChance, gift.name, giftIndex);
         });
     }
 
