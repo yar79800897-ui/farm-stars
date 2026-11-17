@@ -329,10 +329,21 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSpinButtonState();
 
     if (btnOpenWheel) {
-        btnOpenWheel.addEventListener("click", () => {
+        btnOpenWheel.addEventListener("click", async () => {
             if (wheelModal) wheelModal.classList.remove("hidden-modal");
             if (wheelStatusText) wheelStatusText.textContent = "";
-            syncDailySpins();
+
+            if (serverMode) {
+                // Прокруты и баланс берём с сервера, иначе открытие колеса сбрасывает счётчик
+                try {
+                    applyServerState(await api("/api/me"));
+                } catch (error) {
+                    // остаёмся с тем, что уже известно
+                }
+            } else {
+                syncDailySpins();
+            }
+
             renderSpins();
             updateSpinButtonState();
         });
