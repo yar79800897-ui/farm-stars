@@ -1,4 +1,4 @@
-services:
+﻿services:
   - type: web
     name: farm-stars
     runtime: python
@@ -8,6 +8,10 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: BOT_TOKEN
+        sync: false
+      - key: TURSO_URL
+        sync: false
+      - key: TURSO_TOKEN
         sync: false
       - key: ALLOW_GUEST
         value: "1"
