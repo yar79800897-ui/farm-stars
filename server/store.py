@@ -207,18 +207,21 @@ def spins_left_of(row):
 
 
 def ensure_user(uid, name=None, username=None):
+    db = backend()
     ts = now()
-    rows = backend().query(
-        "INSERT INTO users(uid, name, username, stars, coins, xp, wheel_date, wheel_used, created, seen) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?) "
-        "ON CONFLICT(uid) DO UPDATE SET "
-        "seen=excluded.seen, "
-        "name=COALESCE(NULLIF(excluded.name, ''), users.name), "
-        "username=COALESCE(NULLIF(excluded.username, ''), users.username) "
-        "RETURNING *",
+    db.query(
+        "INSERT OR IGNORE INTO users(uid, name, username, stars, coins, xp, wheel_date, wheel_used, created, seen) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
         (uid, name, username or "", START_STARS, START_COINS, 0, today(), 0, ts, ts),
     )
-    return rows[0]
+    db.query(
+        "UPDATE users SET seen=?, name=COALESCE(NULLIF(?, ''), name), "
+        "username=COALESCE(NULLIF(?, ''), username) WHERE uid=?",
+        (ts, name or "", username or "", uid),
+    )
+    rows = db.query("SELECT * FROM users WHERE uid=?", (uid,))
+    return rows[0] if rows else None
+
 
 
 def user_public(row):
@@ -276,19 +279,18 @@ def spin(uid, gift_file, chance):
 
     db = backend()
     cost = gift["rate"] * chance
+
+    rows = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    if (rows[0].get("stars") or 0) < cost:
+        return 402, {"error": "no_money", "need": cost, "stars": rows[0].get("stars") or 0}
+
     won = int.from_bytes(os.urandom(4), "big") % 100 < chance
     ts = now()
 
-    # Одно обращение: списываем стоимость и сразу получаем новый баланс.
-    charged = db.query(
-        "UPDATE users SET stars=stars-? WHERE uid=? AND stars>=? RETURNING stars, coins",
-        (cost, uid, cost),
-    )
-    if not charged:
-        rows = db.query("SELECT stars FROM users WHERE uid=?", (uid,))
-        if not rows:
-            return 401, {"error": "no_user"}
-        return 402, {"error": "no_money", "need": cost, "stars": rows[0].get("stars") or 0}
+    db.query("UPDATE users SET stars=stars-? WHERE uid=? AND stars>=?", (cost, uid, cost))
+
 
     statements = [
         ("INSERT INTO spins(uid, gift, chance, cost, won, ts) VALUES(?,?,?,?,?,?)",
@@ -305,6 +307,8 @@ def spin(uid, gift_file, chance):
         ))
 
     results = db.query_batch(statements)
+    after = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
+    balance = after[0] if after else {}
 
     payload = {
         "won": won,
@@ -312,8 +316,8 @@ def spin(uid, gift_file, chance):
         "price": gift["price"],
         "chance": chance,
         "cost": cost,
-        "stars": charged[0].get("stars") or 0,
-        "coins": charged[0].get("coins") or 0,
+        "stars": balance.get("stars") or 0,
+        "coins": balance.get("coins") or 0,
     }
     if won:
         payload["inventory"] = [dict(row) for row in results[-1]]
@@ -384,20 +388,20 @@ def exchange(uid, coins):
     spent = stars * EXCHANGE_RATE
 
     db = backend()
-    rows = db.query(
-        "UPDATE users SET coins=coins-?, stars=stars+? WHERE uid=? AND coins>=? RETURNING stars, coins",
-        (spent, stars, uid, spent),
-    )
-    if not rows:
-        check = db.query("SELECT coins FROM users WHERE uid=?", (uid,))
-        if not check:
-            return 401, {"error": "no_user"}
+    check = db.query("SELECT coins FROM users WHERE uid=?", (uid,))
+    if not check:
+        return 401, {"error": "no_user"}
+    if (check[0].get("coins") or 0) < spent:
         return 402, {"error": "no_money"}
+
+    db.query("UPDATE users SET coins=coins-?, stars=stars+? WHERE uid=?", (spent, stars, uid))
+    after = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
+    balance = after[0] if after else {}
 
     return 200, {
         "ok": True,
-        "stars": rows[0].get("stars") or 0,
-        "coins": rows[0].get("coins") or 0,
+        "stars": balance.get("stars") or 0,
+        "coins": balance.get("coins") or 0,
         "spent": spent,
     }
 
@@ -456,10 +460,8 @@ def farm_sell(uid, amount):
         return 400, {"error": "bad_amount"}
 
     db = backend()
-    rows = db.query(
-        "UPDATE users SET coins=coins+? WHERE uid=? RETURNING stars, coins",
-        (amount, uid),
-    )
+    db.query("UPDATE users SET coins=coins+? WHERE uid=?", (amount, uid))
+    rows = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
     if not rows:
         return 401, {"error": "no_user"}
     return 200, {"ok": True, "coins": rows[0].get("coins") or 0, "stars": rows[0].get("stars") or 0}
@@ -474,17 +476,17 @@ def farm_buy(uid, amount):
         return 400, {"error": "bad_amount"}
 
     db = backend()
-    rows = db.query(
-        "UPDATE users SET coins=coins-? WHERE uid=? AND coins>=? RETURNING stars, coins",
-        (amount, uid, amount),
-    )
-    if not rows:
-        check = db.query("SELECT coins FROM users WHERE uid=?", (uid,))
-        if not check:
-            return 401, {"error": "no_user"}
+    check = db.query("SELECT coins FROM users WHERE uid=?", (uid,))
+    if not check:
+        return 401, {"error": "no_user"}
+    if (check[0].get("coins") or 0) < amount:
         return 402, {"error": "no_money", "coins": check[0].get("coins") or 0}
 
-    return 200, {"ok": True, "coins": rows[0].get("coins") or 0, "stars": rows[0].get("stars") or 0}
+    db.query("UPDATE users SET coins=coins-? WHERE uid=?", (amount, uid))
+    rows = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))
+    balance = rows[0] if rows else {}
+
+    return 200, {"ok": True, "coins": balance.get("coins") or 0, "stars": balance.get("stars") or 0}
 
 
 def create_invoice(uid, stars, payload):

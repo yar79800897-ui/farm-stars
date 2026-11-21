@@ -111,6 +111,19 @@ class Handler(BaseHTTPRequestHandler):
             payload["inventory"] = store.inventory_of(uid)
             return self._json(200, payload)
 
+        if path == "/api/diag":
+            try:
+                store.ensure_user("diag:probe", "Диагностика", "")
+                store.backend().query("UPDATE users SET xp=xp+1 WHERE uid=?", ("diag:probe",))
+                rows = store.backend().query(
+                    "SELECT uid, xp, stars, coins FROM users WHERE uid=?", ("diag:probe",))
+                return self._json(200, {
+                    "db": store.backend_name(),
+                    "user": rows[0] if rows else None,
+                })
+            except Exception as exc:
+                return self._json(500, {"db": "unknown", "error": str(exc)})
+
         if path == "/api/checkers/game":
             uid, row = self._identity()
             if row is None:
