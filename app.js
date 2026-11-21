@@ -1648,13 +1648,28 @@ document.addEventListener("DOMContentLoaded", () => {
     const checkersTimerMe = document.getElementById("checkers-timer-me");
     const checkersTimerOpponent = document.getElementById("checkers-timer-opponent");
     const checkersClock = document.getElementById("checkers-clock");
+    const checkersActions = document.getElementById("checkers-actions");
+    const btnCheckersAgain = document.getElementById("btn-checkers-again");
     const checkersCells = [];
 
     let checkersMinutes = 5;
     let checkersGame = null;
     let checkersSelected = null;
     let checkersPollTimer = null;
+    let checkersPollBusy = false;
     let checkersBotTimer = null;
+    let checkersBalanceFor = null;
+
+    async function refreshCheckersBalance(gameId) {
+        if (checkersBalanceFor === gameId) return;
+        checkersBalanceFor = gameId;
+        try {
+            applyServerState(await api("/api/me"));
+            renderInventory();
+        } catch (error) {
+            // баланс обновится при следующем открытии приложения
+        }
+    }
 
     function checkersSetStatus(text, color) {
         const box = checkersGameBox && !checkersGameBox.classList.contains("hidden-game")
@@ -1701,9 +1716,11 @@ document.addEventListener("DOMContentLoaded", () => {
         checkersTimerOpponent.classList.toggle("active", game.status === "active" && game.turn !== game.myColor);
 
         checkersClock.hidden = false;
-        checkersClock.textContent = game.status !== "active"
-            ? "Партия окончена"
-            : (game.turn === game.myColor ? "Ваш ход" : "Ход соперника");
+        checkersClock.textContent = game.status === "waiting"
+            ? "Ожидание"
+            : game.status !== "active"
+                ? "Партия окончена"
+                : (game.turn === game.myColor ? "Ваш ход" : "Ход соперника");
 
         for (let display = 0; display < 64; display++) {
             const row = Math.floor(display / 8);
@@ -1726,6 +1743,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 cell.classList.add("playable");
             }
 
+            if (moves.some(move => move.from === actual)) {
+                cell.classList.add("movable");
+            }
+
             if (piece !== ".") {
                 const chip = document.createElement("span");
                 chip.className = "piece " + (piece === "w" || piece === "W" ? "white" : "black");
@@ -1746,8 +1767,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 ? "Ничья — ставки возвращены"
                 : (game.winner === game.myColor ? "Вы выиграли!" : "Вы проиграли");
             checkersSetStatus(text, game.winner === game.myColor ? "#ccff00" : "#ff3838");
-        } else if (game.status === "waiting") {
-            checkersSetStatus("Ищем соперника... если никого не будет, через 30 секунд подключим бота.", "#8e9297");
+            if (checkersActions) checkersActions.hidden = true;
+            if (btnCheckersAgain) btnCheckersAgain.hidden = false;
+            refreshCheckersBalance(game.id);
+        } else {
+            if (checkersActions) checkersActions.hidden = false;
+            if (btnCheckersAgain) btnCheckersAgain.hidden = true;
+            if (game.status === "waiting") {
+                checkersSetStatus("Ищем соперника... если никого не будет, через 30 секунд подключим бота.", "#8e9297");
+            } else if (game.turn === game.myColor) {
+                checkersSetStatus("Твой ход", "#ccff00");
+            } else {
+                checkersSetStatus(game.bot ? "Бот думает..." : "Ход соперника", "#8e9297");
+            }
         }
     }
 
@@ -1769,8 +1801,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
                 renderCheckers();
             } catch (error) {
-                checkersSetStatus("Ход не принят. Попробуй другой.", "#ff3838");
                 renderCheckers();
+                checkersSetStatus("Ход не принят. Попробуй другой.", "#ff3838");
             }
             return;
         }
@@ -1789,6 +1821,7 @@ document.addEventListener("DOMContentLoaded", () => {
             clearInterval(checkersPollTimer);
             checkersPollTimer = null;
         }
+        checkersPollBusy = false;
     }
 
     function stopCheckersBot() {
@@ -1801,29 +1834,60 @@ document.addEventListener("DOMContentLoaded", () => {
     function startCheckersPolling() {
         stopCheckersPolling();
         checkersPollTimer = setInterval(async () => {
-            if (!checkersGame) return;
+            if (!checkersGame || checkersPollBusy) return;
+            checkersPollBusy = true;
             try {
                 const state = await api("/api/checkers/game?id=" + checkersGame.id);
                 checkersGame = state;
                 renderCheckers();
-                if (state.status !== "active") stopCheckersPolling();
+                if (state.status === "finished") stopCheckersPolling();
             } catch (error) {
                 // тихо: следующий опрос попробует снова
+            } finally {
+                checkersPollBusy = false;
             }
-        }, 1500);
+        }, 1000);
     }
 
     function enterCheckersGame(game) {
         checkersGame = game;
         checkersSelected = null;
+        checkersBalanceFor = null;
+        localStorage.setItem("checkersGameId", String(game.id));
         if (checkersLobby) checkersLobby.classList.add("hidden-game");
         if (checkersGameBox) checkersGameBox.classList.remove("hidden-game");
         buildCheckersBoard();
         renderCheckers();
-        if (game.status === "active") {
-            checkersSetStatus(game.turn === game.myColor ? "Твой ход" : "Ход соперника", "#8e9297");
-        } else if (game.status === "waiting") {
-            checkersSetStatus("Ищем соперника... через 30 секунд подключим бота.", "#8e9297");
+
+        if (game.status === "waiting") {
+            stopCheckersBot();
+            checkersBotTimer = setTimeout(async () => {
+                try {
+                    const withBot = await api("/api/checkers/bot", {
+                        method: "POST",
+                        body: JSON.stringify({ id: game.id })
+                    });
+                    enterCheckersGame(withBot);
+                } catch (error) {
+                    checkersSetStatus("Не удалось подключить бота.", "#ff3838");
+                }
+            }, Math.max(0, 30 - (game.ageSec || 0)) * 1000);
+        }
+    }
+
+    async function resumeCheckers() {
+        const saved = Number(localStorage.getItem("checkersGameId") || 0);
+        if (!saved) return;
+        try {
+            const game = await api("/api/checkers/game?id=" + saved);
+            if (game.status === "active" || game.status === "waiting") {
+                enterCheckersGame(game);
+                startCheckersPolling();
+            } else {
+                localStorage.removeItem("checkersGameId");
+            }
+        } catch (error) {
+            localStorage.removeItem("checkersGameId");
         }
     }
 
@@ -1860,23 +1924,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         enterCheckersGame(game);
-
-        if (game.status === "waiting") {
-            checkersSetStatus("Ищем соперника... если никого не будет, через 30 секунд подключим бота.", "#8e9297");
-            checkersBotTimer = setTimeout(async () => {
-                try {
-                    const withBot = await api("/api/checkers/bot", {
-                        method: "POST",
-                        body: JSON.stringify({ id: game.id })
-                    });
-                    enterCheckersGame(withBot);
-                    checkersSetStatus("Соперник — сильный бот. Твой ход!", "#ccff00");
-                } catch (error) {
-                    checkersSetStatus("Не удалось подключить бота.", "#ff3838");
-                }
-            }, 30000);
-        }
-
         startCheckersPolling();
     }
 
@@ -1890,15 +1937,34 @@ document.addEventListener("DOMContentLoaded", () => {
         btnOpenCheckers.addEventListener("click", () => {
             switchToScreen("screen-checkers");
             resetCheckers();
+            resumeCheckers();
         });
     }
     if (btnCheckersBack) {
-        btnCheckersBack.addEventListener("click", () => {
+        btnCheckersBack.addEventListener("click", async () => {
+            const game = checkersGame;
             stopCheckersPolling();
+            stopCheckersBot();
+            if (game && game.status === "waiting") {
+                try {
+                    await api("/api/checkers/cancel", {
+                        method: "POST",
+                        body: JSON.stringify({ id: game.id })
+                    });
+                    applyServerState(await api("/api/me"));
+                } catch (error) {
+                    // ставка вернётся при следующем входе, если отмена не прошла
+                }
+            }
+            resetCheckers();
+            if (!game || game.status === "waiting" || game.status === "finished") {
+                localStorage.removeItem("checkersGameId");
+            }
             switchToScreen("screen-games", "screen-games");
         });
     }
     if (btnCheckersPlay) btnCheckersPlay.addEventListener("click", startCheckersGame);
+    if (btnCheckersAgain) btnCheckersAgain.addEventListener("click", resetCheckers);
 
     document.querySelectorAll(".time-btn").forEach(button => {
         button.addEventListener("click", () => {

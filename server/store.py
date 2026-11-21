@@ -541,6 +541,7 @@ CHECKERS_BOT_UID = "bot"
 CHECKERS_BOT_NAME = "Сильный бот"
 CHECKERS_AWAY = 30
 CHECKERS_BOT_DEPTH = 3
+CHECKERS_BOT_DELAY = 3  # last_ts в целых секундах: реальная пауза бота 2–3 с
 
 
 def _game(game_id):
@@ -577,6 +578,40 @@ def _clock_left(game):
     return max(0, white_ms), max(0, black_ms)
 
 
+def _bot_move(game):
+    """Бот отвечает не сразу, а после паузы — её отсчитывает опрос состояния.
+    Клиент опрашивает раз в секунду без наложения запросов, поэтому двойной
+    хода бота не бывает; при нескольких браузерах нужна блокировка."""
+    if now() - (game["last_ts"] or 0) < CHECKERS_BOT_DELAY:
+        return game
+
+    move = checkers.best_bot_move(game["board"], "black", CHECKERS_BOT_DEPTH)
+    if move is None:
+        _finish_game(game, "white")
+        return _game(game["id"])
+
+    board = checkers.apply_move(game["board"], move)
+    backend().query("UPDATE games SET board=?, turn='white', last_ts=? WHERE id=?",
+                    (board, now(), game["id"]))
+    finished = checkers.winner(board, "white")
+    if finished:
+        _finish_game(_game(game["id"]), finished)
+    return _game(game["id"])
+
+
+def checkers_cancel(uid, game_id):
+    game = _game(game_id)
+    if not game:
+        return 404, {"error": "not_found"}
+    if game["white_uid"] != uid:
+        return 403, {"error": "not_player"}
+    if game["status"] != "waiting":
+        return 409, {"error": "not_waiting"}
+    _finish_game(game, "")
+    backend().query("UPDATE users SET stars=stars+? WHERE uid=?", (game["bet"], uid))
+    return 200, {"ok": True}
+
+
 def checkers_payload(game, uid):
     side = "white" if game["white_uid"] == uid else "black"
     white_ms, black_ms = _clock_left(game)
@@ -599,6 +634,7 @@ def checkers_payload(game, uid):
         "whiteMs": max(0, white_ms),
         "blackMs": max(0, black_ms),
         "moves": moves,
+        "ageSec": max(0, now() - (game["created"] or 0)),
     }
 
 
@@ -694,6 +730,9 @@ def checkers_game_state(uid, game_id):
                 _finish_game(game, "white")
                 game = _game(game_id)
 
+        if game["status"] == "active" and game["bot"] and game["turn"] == "black":
+            game = _bot_move(game)
+
     return 200, checkers_payload(game, uid)
 
 
@@ -742,14 +781,7 @@ def checkers_move(uid, game_id, start, target):
         (board, turn, white_ms, black_ms, ts, game_id),
     )
 
-    if game["bot"] and turn == "black":
-        bot_move = checkers.best_bot_move(board, "black", CHECKERS_BOT_DEPTH)
-        if bot_move:
-            board = checkers.apply_move(board, bot_move)
-            turn = "white"
-            db.query("UPDATE games SET board=?, turn=?, last_ts=? WHERE id=?",
-                     (board, turn, now(), game_id))
-
+    # ход бота делает _bot_move при следующем опросе состояния
     finished = checkers.winner(board, turn)
     if finished:
         _finish_game(_game(game_id), finished)

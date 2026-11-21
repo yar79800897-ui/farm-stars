@@ -165,6 +165,8 @@ class Handler(BaseHTTPRequestHandler):
                 status, payload = store.checkers_resign(uid, game_id)
             elif path == "/api/checkers/draw":
                 status, payload = store.checkers_draw(uid, game_id)
+            elif path == "/api/checkers/cancel":
+                status, payload = store.checkers_cancel(uid, game_id)
             else:
                 return self._json(404, {"error": "not_found"})
             return self._json(status, payload)

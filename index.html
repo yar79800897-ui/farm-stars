@@ -165,7 +165,7 @@
 
                 <div class="checkers-lobby" id="checkers-lobby">
                     <p class="checkers-sub">Победитель получает 90% банка, 10% — комиссия платформы. Ничья — ставки возвращаются.</p>
-                    <label class="checkers-label" for="checkers-bet">Ставка, ⭐</label>
+                    <label class="checkers-label" for="checkers-bet">Ставка ⭐</label>
                     <input id="checkers-bet" class="checkers-input" type="number" min="10" step="10" value="10" inputmode="numeric">
                     <div class="checkers-times">
                         <button class="time-btn active" data-minutes="5">5 минут</button>
@@ -185,10 +185,11 @@
                         <span id="checkers-me">Вы</span>
                         <span id="checkers-timer-me" class="checkers-timer">5:00</span>
                     </div>
-                    <div class="checkers-actions">
+                    <div class="checkers-actions" id="checkers-actions">
                         <button class="btn-secondary" id="btn-checkers-draw">Ничья</button>
                         <button class="btn-secondary" id="btn-checkers-resign">Сдаться</button>
                     </div>
+                    <button class="btn-action" id="btn-checkers-again" hidden>Новая игра</button>
                     <p id="checkers-status2" class="checkers-status"></p>
                 </div>
             </section>
