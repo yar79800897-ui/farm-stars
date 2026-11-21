@@ -330,9 +330,16 @@ def register_webhook():
         public, result.get("ok"), result.get("description", "")))
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    # по умолчанию очередь входящих соединений всего 5 — на всплеске браузеры
+    # получают отказ, поэтому поднимаем её
+    request_queue_size = 128
+
+
 def main():
     os.chdir(ROOT)
-    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    httpd = Server(("0.0.0.0", PORT), Handler)
     print("Farm Stars server on http://0.0.0.0:{} (gifts: {}, bot token: {})".format(
         PORT, len(store.CATALOGUE), "yes" if tgauth.BOT_TOKEN else "no"))
     try:

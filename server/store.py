@@ -585,14 +585,21 @@ def _bot_move(game):
     if now() - (game["last_ts"] or 0) < CHECKERS_BOT_DELAY:
         return game
 
+    # время бота тикает, пока он «думает»: без этого его часы не убывали
+    elapsed_ms = max(0, now() - (game["last_ts"] or 0)) * 1000
+    black_ms = max(0, game["black_ms"] - elapsed_ms)
+    if black_ms <= 0:
+        _finish_game(game, "white")
+        return _game(game["id"])
+
     move = checkers.best_bot_move(game["board"], "black", CHECKERS_BOT_DEPTH)
     if move is None:
         _finish_game(game, "white")
         return _game(game["id"])
 
     board = checkers.apply_move(game["board"], move)
-    backend().query("UPDATE games SET board=?, turn='white', last_ts=? WHERE id=?",
-                    (board, now(), game["id"]))
+    backend().query("UPDATE games SET board=?, turn='white', black_ms=?, last_ts=? WHERE id=?",
+                    (board, black_ms, now(), game["id"]))
     finished = checkers.winner(board, "white")
     if finished:
         _finish_game(_game(game["id"]), finished)
