@@ -934,3 +934,79 @@ code{background:#1c2027;border-color:#2a2f39;color:#d8ff7a}
 }
 .stage{position:relative}
 .stage.zoom #game{width:145%;max-width:none;max-height:none}
+
+/* =====================================================================
+   Шапка и нижняя панель в цветах приложения (вместо коричневого дерева)
+   ===================================================================== */
+.hud{
+  background:#13151a;
+  border-bottom:1px solid #242933;
+  color:#ffffff;
+}
+.hud .pill{
+  background:#181b22;
+  border:1px solid #242933;
+  box-shadow:none;
+  color:#ffffff;
+}
+.hud .pill.coins{background:#1b1a10;border-color:#3a3413;color:#ffe08a}
+.hud .pill.stars{background:#161c14;border-color:#3a4a12;color:#d8ff7a}
+.hud .pill.water{background:#101a20;border-color:#22404f;color:#8fd6ff}
+.hud .pill.water.empty{color:#ffb3a8;border-color:#5a2b26}
+.hud .clock{color:#ccff00}
+.hud .day{color:#ffffff;text-shadow:none}
+.hud .weather{background:#181b22;border:1px solid #242933;color:#8e9297}
+.hud .stat-num{color:#8e9297}
+.hud .bar{background:#0f1116;border-color:#242933;box-shadow:none}
+.hud .pixel-btn.small{
+  background:#181b22;border:1px solid #242933;box-shadow:none;color:#ffffff;
+}
+
+.dock{
+  background:#13151a;
+  border-top:1px solid #242933;
+}
+.slot{
+  background:#181b22;
+  border:1px solid #242933;
+  box-shadow:none;
+  color:#e8eaed;
+}
+.slot:hover{background:#1d212a;border-color:#2f3540}
+.slot.active{
+  background:rgba(204,255,0,.12);
+  border-color:rgba(204,255,0,.55);
+  box-shadow:none;
+  transform:none;
+}
+.slot.active::after{display:none}
+.slot-key{color:#5d6470}
+.slot-cost{color:#ffe08a;background:rgba(0,0,0,.45)}
+.slot .slot-water{background:rgba(18,48,64,.85)}
+.dock-actions .pixel-btn{
+  background:#181b22;
+  border:1px solid #242933;
+  box-shadow:none;
+  color:#ffffff;
+}
+
+@media (max-width:520px){
+  .hud{padding:4px 7px;gap:4px}
+  .hud-center{padding-top:2px}
+  .hud .pill{font-size:12px;padding:2px 6px}
+  .hud .pill-ico{font-size:11px}
+  .hud .clock{font-size:13px}
+  .hud .day{font-size:11px}
+  .hud .weather{font-size:10px;padding:1px 5px}
+  .hud .bar.energy{width:34px;flex-basis:34px;height:8px}
+  .hud .stat-num{min-width:16px;font-size:12px}
+  .hud .stat{font-size:11px;gap:3px}
+  .hud-right .pixel-btn.small{padding:4px 6px;font-size:12px}
+  .dock{padding:5px 5px calc(5px + env(safe-area-inset-bottom))}
+  .hotbar{gap:5px;padding:1px}
+  .slot{height:52px}
+  .slot-icon{width:26px;height:26px}
+  .slot-label{font-size:8.5px}
+  .dock-actions{gap:4px}
+  .dock-actions .pixel-btn{font-size:11px;padding:5px 4px}
+}

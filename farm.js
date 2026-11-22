@@ -150,81 +150,8 @@
     let syncTimer = 0;
 
     // ---------------------------------------------------------------- звук
-    let audioCtx = null;
-
-    function ensureAudio() {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) return null;
-        if (!audioCtx) {
-            try { audioCtx = new Ctx(); } catch (e) { audioCtx = null; }
-        }
-        if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-        return audioCtx;
-    }
-
-    function tone(freq, dur, type, vol, delay, slideTo) {
-        const ac = ensureAudio();
-        if (!ac) return;
-        const t0 = ac.currentTime + (delay || 0);
-        const osc = ac.createOscillator();
-        const gain = ac.createGain();
-        osc.type = type || "square";
-        osc.frequency.setValueAtTime(freq, t0);
-        if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
-        gain.gain.setValueAtTime(0.0001, t0);
-        gain.gain.exponentialRampToValueAtTime(vol || 0.06, t0 + 0.012);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-        osc.connect(gain).connect(ac.destination);
-        osc.start(t0);
-        osc.stop(t0 + dur + 0.02);
-    }
-
-    function noise(dur, vol, freq) {
-        const ac = ensureAudio();
-        if (!ac) return;
-        const len = Math.max(1, Math.floor(ac.sampleRate * dur));
-        const buf = ac.createBuffer(1, len, ac.sampleRate);
-        const data = buf.getChannelData(0);
-        for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-        const src = ac.createBufferSource();
-        src.buffer = buf;
-        const filter = ac.createBiquadFilter();
-        filter.type = "bandpass";
-        filter.frequency.value = freq || 900;
-        const gain = ac.createGain();
-        gain.gain.value = vol || 0.05;
-        src.connect(filter).connect(gain).connect(ac.destination);
-        src.start();
-    }
-
     function sfx(name) {
-        switch (name) {
-            case "tap": tone(520, 0.05, "triangle", 0.04); break;
-            case "collect": tone(660, 0.09, "triangle", 0.06); tone(990, 0.09, "triangle", 0.045, 0.06); break;
-            case "coin": tone(880, 0.08, "square", 0.045); tone(1320, 0.1, "square", 0.04, 0.07); break;
-            case "error": tone(220, 0.16, "sawtooth", 0.045, 0, 140); break;
-            case "chicken":
-                tone(1050, 0.07, "square", 0.05);
-                tone(700, 0.1, "square", 0.045, 0.08, 520);
-                tone(950, 0.06, "square", 0.035, 0.2);
-                break;
-            case "cow":
-                tone(180, 0.5, "sawtooth", 0.05, 0, 120);
-                tone(240, 0.35, "sine", 0.04, 0.12, 170);
-                break;
-            case "pig":
-                noise(0.09, 0.05, 420);
-                tone(300, 0.08, "sawtooth", 0.04, 0.05, 220);
-                break;
-            case "sheep":
-                tone(620, 0.28, "triangle", 0.045, 0, 700);
-                tone(700, 0.2, "triangle", 0.035, 0.05, 600);
-                break;
-            case "bee":
-                tone(260, 0.3, "sawtooth", 0.03, 0, 320);
-                noise(0.2, 0.02, 1800);
-                break;
-        }
+        if (window.Sfx) window.Sfx.play(name);
     }
 
     const state = {
@@ -1356,6 +1283,18 @@
         const expand = $("barn-expand");
         if (expand) {
             expand.innerHTML = "";
+
+            expand.appendChild(makeRow(
+                "🌻",
+                "Уютная ферма",
+                "Второй мир: грядки, погода, куры и рынок",
+                "Перейти",
+                false,
+                function () {
+                    if (typeof callbacks.onWorld2 === "function") callbacks.onWorld2();
+                }
+            ));
+
             const lockedPens = PENS.filter(function (pen) { return !penState(pen).unlocked; });
             const lockedBeds = BEDS.filter(function (bed) { return !bedState(bed).unlocked; });
 

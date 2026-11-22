@@ -423,8 +423,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 spinsLeft = result.spins_left;
                 renderSpins();
                 updateSpinButtonState();
+                if (window.Sfx) Sfx.wheel(4000);
                 animateWheelTo(result.index);
                 setTimeout(() => {
+                    if (window.Sfx) Sfx.play(result.prize.type === "empty" ? "lose" : "win");
                     if (!wheelStatusText) return;
                     wheelStatusText.style.color = "#ccff00";
                     wheelStatusText.textContent = wheelPrizeText(result.prize);
@@ -467,6 +469,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const totalRotation = 360 * 5 + targetAngle;
 
             // Исправленные кавычки для физического вращения canvas
+            if (window.Sfx) Sfx.wheel(4000);
             if (canvas) canvas.style.transform = `rotate(${totalRotation}deg)`;
 
             setTimeout(() => {
@@ -474,6 +477,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnSpin.disabled = false;
                 
                 const prize = prizes[winningIndex];
+                if (window.Sfx) Sfx.play(prize.type === "empty" ? "lose" : "win");
                 if (wheelStatusText) wheelStatusText.style.color = "#ccff00";
                 
                 if (prize.type === "coins") {
@@ -967,6 +971,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const totalRotation = 360 * 4 + landingAngle;
 
         setStatus("Крутим стрелку... Подарок: " + giftName, "#ccff00");
+        if (window.Sfx) Sfx.play("riser");
 
         if (upgradePointer) {
             upgradePointer.style.transition = "";
@@ -976,6 +981,7 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => {
             isCrashSpinning = false;
             btnBuyUpgradeSpin.disabled = false;
+            if (window.Sfx) Sfx.play(won ? "win" : "lose");
 
             if (won) {
                 if (!serverMode) {
@@ -1469,6 +1475,9 @@ document.addEventListener("DOMContentLoaded", () => {
             },
             getCoins: function () {
                 return currentCoins;
+            },
+            onWorld2: function () {
+                openWorld2();
             },
             onStats: function (stats) {
                 renderLevel(stats.xp);
@@ -2045,15 +2054,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    if (btnOpenWorld2) {
-        btnOpenWorld2.addEventListener("click", () => {
-            if (world2Frame && !world2Frame.getAttribute("src")) {
-                world2Frame.setAttribute("src", "world2/index.html");
-            }
-            switchToScreen("screen-world2");
-            sendWorldWallet();
-        });
+    function openWorld2() {
+        if (world2Frame && !world2Frame.getAttribute("src")) {
+            world2Frame.setAttribute("src", "world2/index.html");
+        }
+        if (window.Farm && Farm.closeBarn) Farm.closeBarn();
+        switchToScreen("screen-world2");
+        sendWorldWallet();
     }
+
+    if (btnOpenWorld2) btnOpenWorld2.addEventListener("click", openWorld2);
     if (btnWorld2Back) {
         btnWorld2Back.addEventListener("click", () => {
             switchToScreen("screen-farm");
