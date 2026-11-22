@@ -54,6 +54,7 @@
       <div class="hint" id="hint">Кликните по дикой грядке мотыгой, чтобы вскопать землю</div>
       <div class="toasts" id="toasts"></div>
       <div class="flash" id="flash"></div>
+      <button class="zoom-btn" id="zoomBtn" aria-label="Масштаб мира">⤢</button>
     </div>
 
     <footer class="dock">
@@ -110,5 +111,24 @@
 </div>
 
 <script src="game.js"></script>
+<script>
+(function () {
+  var stage = document.getElementById('stage');
+  var btn = document.getElementById('zoomBtn');
+  var on = true;
+  try { on = localStorage.getItem('world2.zoom') !== '0'; } catch (e) {}
+  function apply() {
+    stage.classList.toggle('zoom', on);
+    btn.textContent = on ? '⛶' : '⤢';
+    btn.title = on ? 'Показать весь мир' : 'Приблизить';
+  }
+  btn.addEventListener('click', function () {
+    on = !on;
+    try { localStorage.setItem('world2.zoom', on ? '1' : '0'); } catch (e) {}
+    apply();
+  });
+  apply();
+})();
+</script>
 </body>
 </html>

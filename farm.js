@@ -149,6 +149,84 @@
     let rafId = 0;
     let syncTimer = 0;
 
+    // ---------------------------------------------------------------- звук
+    let audioCtx = null;
+
+    function ensureAudio() {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        if (!audioCtx) {
+            try { audioCtx = new Ctx(); } catch (e) { audioCtx = null; }
+        }
+        if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+        return audioCtx;
+    }
+
+    function tone(freq, dur, type, vol, delay, slideTo) {
+        const ac = ensureAudio();
+        if (!ac) return;
+        const t0 = ac.currentTime + (delay || 0);
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.type = type || "square";
+        osc.frequency.setValueAtTime(freq, t0);
+        if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(vol || 0.06, t0 + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(gain).connect(ac.destination);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.02);
+    }
+
+    function noise(dur, vol, freq) {
+        const ac = ensureAudio();
+        if (!ac) return;
+        const len = Math.max(1, Math.floor(ac.sampleRate * dur));
+        const buf = ac.createBuffer(1, len, ac.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+        const src = ac.createBufferSource();
+        src.buffer = buf;
+        const filter = ac.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.value = freq || 900;
+        const gain = ac.createGain();
+        gain.gain.value = vol || 0.05;
+        src.connect(filter).connect(gain).connect(ac.destination);
+        src.start();
+    }
+
+    function sfx(name) {
+        switch (name) {
+            case "tap": tone(520, 0.05, "triangle", 0.04); break;
+            case "collect": tone(660, 0.09, "triangle", 0.06); tone(990, 0.09, "triangle", 0.045, 0.06); break;
+            case "coin": tone(880, 0.08, "square", 0.045); tone(1320, 0.1, "square", 0.04, 0.07); break;
+            case "error": tone(220, 0.16, "sawtooth", 0.045, 0, 140); break;
+            case "chicken":
+                tone(1050, 0.07, "square", 0.05);
+                tone(700, 0.1, "square", 0.045, 0.08, 520);
+                tone(950, 0.06, "square", 0.035, 0.2);
+                break;
+            case "cow":
+                tone(180, 0.5, "sawtooth", 0.05, 0, 120);
+                tone(240, 0.35, "sine", 0.04, 0.12, 170);
+                break;
+            case "pig":
+                noise(0.09, 0.05, 420);
+                tone(300, 0.08, "sawtooth", 0.04, 0.05, 220);
+                break;
+            case "sheep":
+                tone(620, 0.28, "triangle", 0.045, 0, 700);
+                tone(700, 0.2, "triangle", 0.035, 0.05, 600);
+                break;
+            case "bee":
+                tone(260, 0.3, "sawtooth", 0.03, 0, 320);
+                noise(0.2, 0.02, 1800);
+                break;
+        }
+    }
+
     const state = {
         pens: {},
         beds: {},
@@ -973,6 +1051,15 @@
         }
     }
 
+    function penSound(pen) {
+        if (pen.id === "chicken") return "chicken";
+        if (pen.id === "cow") return "cow";
+        if (pen.id === "pig") return "pig";
+        if (pen.id === "sheep" || pen.id === "goat") return "sheep";
+        if (pen.id === "bee") return "bee";
+        return "collect";
+    }
+
     function startPen(pen) {
         const st = penState(pen);
         st.phase = "growing";
@@ -981,6 +1068,7 @@
         st.hungerAt = st.readyAt;
         save();
         updateUI();
+        sfx(penSound(pen));
         setStatus(pen.title + ": " + pen.feedText + " — " + formatLeft(pen.growMs), "#8e9297");
     }
 
@@ -994,6 +1082,7 @@
         st.startedAt = 0;
         st.readyAt = 0;
         st.hungerAt = Date.now();
+        sfx(penSound(pen));
         if (pen.consumes) {
             st.animals = Math.max(1, st.animals - 1);
             st.regrowAt = Date.now() + pen.regrowMs;
@@ -1056,6 +1145,7 @@
         st.readyAt = 0;
         save();
         updateUI();
+        sfx("collect");
         setStatus("Собрали овощи · на продажу: " + sellSum() + " 💰", "#ccff00");
     }
 
@@ -1112,6 +1202,7 @@
 
     function onCanvasClick(event) {
         event.preventDefault();
+        sfx("tap");
         const point = artCoords(event);
 
         const barn = BARNS.find(function (item) {
@@ -1147,6 +1238,7 @@
             return 0;
         }
         if (typeof callbacks.onSell === "function") callbacks.onSell(sum);
+        sfx("coin");
         state.earned += sum;
         state.xp += Math.round(sum / 25);
         Object.keys(state.res).forEach(function (key) {
@@ -1336,10 +1428,12 @@
             return;
         }
         if (typeof callbacks.onSpend === "function" && !callbacks.onSpend(pen.buyPrice)) {
-            barnStatus("Не хватает монет на покупку", "#ff3838");
+            sfx("error");
+                barnStatus("Не хватает монет на покупку", "#ff3838");
             return;
         }
         st.animals += 1;
+            sfx("coin");
         st.herd = Math.max(st.herd, st.animals);
         if (st.animals === 1 || !st.hungerAt) st.hungerAt = Date.now();
         save();
@@ -1351,10 +1445,12 @@
     function unlockPen(pen) {
         const st = penState(pen);
         if (typeof callbacks.onSpend === "function" && !callbacks.onSpend(pen.lockPrice)) {
-            barnStatus("Не хватает монет на загон", "#ff3838");
+            sfx("error");
+                barnStatus("Не хватает монет на загон", "#ff3838");
             return;
         }
         st.unlocked = true;
+            sfx("coin");
         st.animals = 2;
         st.herd = 2;
         st.phase = "idle";
@@ -1368,10 +1464,12 @@
     function unlockBed(bed) {
         const st = bedState(bed);
         if (typeof callbacks.onSpend === "function" && !callbacks.onSpend(bed.lockPrice)) {
-            barnStatus("Не хватает монет на грядку", "#ff3838");
+            sfx("error");
+                barnStatus("Не хватает монет на грядку", "#ff3838");
             return;
         }
         st.unlocked = true;
+            sfx("coin");
         st.phase = "idle";
         save();
         updateUI();

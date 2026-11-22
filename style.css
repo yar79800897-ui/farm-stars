@@ -2331,3 +2331,9 @@ h2 {
     display: block;
     background-color: #0e120c;
 }
+
+.btn-farm-world2 {
+    border-color: rgba(204, 255, 0, 0.45);
+    color: #ccff00;
+    background-color: rgba(204, 255, 0, 0.06);
+}

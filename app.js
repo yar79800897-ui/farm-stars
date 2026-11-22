@@ -2055,7 +2055,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     if (btnWorld2Back) {
-        btnWorld2Back.addEventListener("click", () => switchToScreen("screen-games", "screen-games"));
+        btnWorld2Back.addEventListener("click", () => {
+            switchToScreen("screen-farm");
+            if (window.Farm) Farm.refresh();
+        });
     }
     if (world2Frame) world2Frame.addEventListener("load", sendWorldWallet);
 

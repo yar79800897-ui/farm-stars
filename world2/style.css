@@ -844,3 +844,93 @@ body{
   .slot{flex:0 0 auto;width:auto;height:62px}
   .slot-icon{width:30px;height:30px}
 }
+
+/* =====================================================================
+   Меню и окна в цветах приложения
+   ===================================================================== */
+.modal,
+.confirm{
+  background:#13151a;
+  border:1px solid #242933;
+  border-radius:16px;
+  box-shadow:0 24px 60px rgba(0,0,0,.6);
+  color:#ffffff;
+}
+.modal-head{
+  background:#181b22;
+  border-bottom:1px solid #242933;
+  color:#ffffff;
+}
+.modal-head h2{font-size:19px;font-weight:800;text-shadow:none}
+.icon-btn{
+  background:#181b22;color:#ffffff;
+  border:1px solid #2a2f39;border-radius:10px;
+  box-shadow:none;
+}
+.modal-body{color:#ffffff;scrollbar-color:#2a2f39 #13151a}
+.modal-body::-webkit-scrollbar-track{background:#13151a}
+.modal-body::-webkit-scrollbar-thumb{background:#2a2f39;border-color:#13151a}
+
+.section-title{color:#ffffff;border-bottom:1px dashed #242933;font-size:15px}
+.section-title .muted{color:#8e9297}
+
+.item-card,
+.upgrade-card,
+.quest,
+.leader-row,
+.settings-row{
+  background:#181b22;
+  border:1px solid #242933;
+  border-radius:12px;
+}
+.item-sub,.upgrade-desc,.ach-desc,.leader-row .lstat{color:#8e9297}
+.item-sum,.sell-total,.quest-reward,.leader-row .lcoins{color:#ccff00}
+.sell-total small,.quest-reward small{color:#8e9297}
+.sell-panel{background:#181b22;border:1px solid #242933;border-radius:12px}
+.upgrade-card.maxed{background:#161c14;border-color:#3a4a12}
+.upgrade-lvl{background:rgba(204,255,0,.12);color:#ccff00}
+.upgrade-req{color:#ff9a8a}
+.quest.done{background:#161c14;border-color:#3a4a12}
+.ach{background:#14161b;border:1px dashed #2a2f39;border-radius:12px}
+.ach.unlocked{background:#181b22;border-color:#3a4a12}
+.leader-row.me{background:#1a2012;border-color:#4b5f17}
+.leader-row .rank{color:#8e9297}
+.offline-note{background:#181b22;border:1px dashed #2a2f39;color:#8e9297}
+.offline-note b{color:#ffffff}
+code{background:#1c2027;border-color:#2a2f39;color:#d8ff7a}
+
+.tab{background:#181b22;color:#8e9297;border:1px solid #242933;box-shadow:none;border-radius:10px}
+.tab.active{background:rgba(204,255,0,.12);color:#ccff00;border-color:rgba(204,255,0,.45);box-shadow:none}
+.ref-row{background:#13151a;border-bottom:1px solid #1e232b}
+.ref-row.head{background:#181b22;color:#8e9297;border-bottom:1px solid #242933}
+.help-list{color:#8e9297}
+.help-list b{color:#ffffff}
+.kbd{background:#181b22;border:1px solid #2a2f39;border-bottom-width:2px;color:#ffffff}
+
+.confirm h3{color:#ffffff;font-size:19px}
+.confirm p{color:#8e9297}
+
+.modal .pixel-btn{
+  background:#181b22;color:#ffffff;
+  border:1px solid #2a2f39;border-radius:10px;
+  box-shadow:none;
+}
+.modal .pixel-btn.green{
+  background:#ccff00;color:#0b0c0e;border-color:#ccff00;font-weight:800;
+}
+.modal .pixel-btn:disabled{opacity:.45}
+.confirm .pixel-btn{background:#181b22;color:#ffffff;border:1px solid #2a2f39;box-shadow:none}
+.confirm .pixel-btn:not(.ghost){background:#ccff00;color:#0b0c0e;border-color:#ccff00}
+
+/* кнопка масштаба */
+.zoom-btn{
+  position:absolute;right:10px;bottom:10px;z-index:5;
+  width:40px;height:40px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(19,21,26,.85);
+  border:1px solid #2a2f39;border-radius:12px;
+  color:#ccff00;font-size:18px;font-weight:700;
+  cursor:pointer;touch-action:manipulation;
+}
+.stage{position:relative}
+.stage.zoom #game{width:145%;max-width:none;max-height:none}
