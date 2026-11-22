@@ -2296,3 +2296,38 @@ h2 {
 #btn-checkers-again {
     width: min(100%, 430px);
 }
+
+/* ==========================================================================
+   МИР 2: УЮТНАЯ ФЕРМА (iframe)
+   ========================================================================== */
+#screen-world2.active {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    background-color: #0b0c0e;
+    overflow: hidden;
+}
+
+.world-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background-color: #13151a;
+    border-bottom: 1px solid #242933;
+}
+
+.world-head h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+#world2-frame {
+    flex: 1 1 auto;
+    width: 100%;
+    border: 0;
+    display: block;
+    background-color: #0e120c;
+}

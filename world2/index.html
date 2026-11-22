@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b3320">
+<title>Пиксельная ферма</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <div class="game-shell" id="gameShell">
+    <header class="hud">
+      <div class="hud-left">
+        <div class="pill stars" title="Звёзды">
+          <span class="pill-ico">⭐</span>
+          <span id="starsTxt">0</span>
+        </div>
+        <div class="pill coins" title="Монеты">
+          <span class="pill-ico">💰</span>
+          <span id="coinsTxt">0</span>
+        </div>
+        <div class="level-box">
+          <div class="level-top">
+            <span>Ур. <b id="levelTxt">1</b></span>
+            <span class="muted" id="xpTxt">0 / 35</span>
+          </div>
+          <div class="bar xp"><i id="xpFill"></i></div>
+        </div>
+      </div>
+      <div class="hud-center">
+        <div class="day-line">
+          <span class="day" id="dayTxt">День 1</span>
+          <span class="weather" id="weatherTxt">☀️ Солнечно</span>
+        </div>
+        <div class="clock" id="clockTxt">06:00</div>
+      </div>
+      <div class="hud-right">
+        <div class="stat energy" title="Энергия">
+          <span class="pill-ico">⚡</span>
+          <div class="bar energy"><i id="energyFill"></i></div>
+          <span class="stat-num" id="energyTxt">100</span>
+        </div>
+        <div class="pill water" title="Вода в лейке">
+          <span class="pill-ico">💧</span>
+          <span id="waterTxt">10/10</span>
+        </div>
+        <button class="pixel-btn small" id="sleepBtn" title="Закончить день">💤<span class="sleep-label"> Спать</span></button>
+      </div>
+    </header>
+
+    <div class="stage" id="stage">
+      <canvas id="game" width="1200" height="720" aria-label="Пиксельная ферма"></canvas>
+      <div class="hint" id="hint">Кликните по дикой грядке мотыгой, чтобы вскопать землю</div>
+      <div class="toasts" id="toasts"></div>
+      <div class="flash" id="flash"></div>
+    </div>
+
+    <footer class="dock">
+      <div class="hotbar" id="hotbar"></div>
+      <div class="dock-actions">
+        <button class="pixel-btn market-btn" id="marketBtn">
+          <span class="btn-ico">🏪</span>
+          <span class="btn-label">Рынок</span>
+          <span class="badge hidden" id="marketBadge">0</span>
+        </button>
+        <button class="pixel-btn menu-btn" id="menuBtn">
+          <span class="btn-ico">📖</span>
+          <span class="btn-label">Меню</span>
+          <span class="badge hidden" id="menuBadge">!</span>
+        </button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<!-- экран старта оставлен для разметки, но в мини-приложении скрыт -->
+<div class="splash hidden" id="splash">
+  <div class="splash-inner">
+    <canvas id="splashArt" width="480" height="240" aria-hidden="true"></canvas>
+    <h1><span>Пиксельная</span><br>ферма</h1>
+    <p class="splash-sub">Сажай, поливай, собирай урожай и преврати небольшой участок в самую уютную ферму в округе.</p>
+    <div class="splash-actions">
+      <button class="pixel-btn big" id="continueBtn">Начать игру</button>
+      <button class="pixel-btn ghost big" id="newBtn">Новая ферма</button>
+    </div>
+    <p class="splash-note" id="splashNote">Прогресс сохраняется автоматически</p>
+  </div>
+</div>
+
+<div class="modal-wrap hidden" id="modalWrap">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-head">
+      <h2 id="modalTitle">Рынок</h2>
+      <button class="icon-btn" id="modalClose" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="confirm-wrap hidden" id="confirmWrap">
+  <div class="confirm" role="dialog" aria-modal="true">
+    <h3 id="confirmTitle">Лечь спать?</h3>
+    <p id="confirmText">День завершится, энергия восстановится, а урожай продолжит расти.</p>
+    <div class="confirm-actions">
+      <button class="pixel-btn ghost" id="confirmNo">Отмена</button>
+      <button class="pixel-btn" id="confirmYes">Да</button>
+    </div>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>

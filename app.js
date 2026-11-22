@@ -2006,6 +2006,59 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // ==========================================================================
+    // 8. МИР 2: УЮТНАЯ ФЕРМА — общий кошелёк через postMessage
+    // ==========================================================================
+    const btnOpenWorld2 = document.getElementById("btn-open-world2");
+    const btnWorld2Back = document.getElementById("btn-world2-back");
+    const world2Frame = document.getElementById("world2-frame");
+
+    function sendWorldWallet() {
+        if (!world2Frame || !world2Frame.contentWindow) return;
+        world2Frame.contentWindow.postMessage(
+            { source: "farmstars", type: "wallet", coins: currentCoins, stars: currentStars },
+            location.origin
+        );
+    }
+
+    window.addEventListener("message", function (event) {
+        if (event.origin !== location.origin) return;
+        const msg = event.data;
+        if (!msg || msg.source !== "world2") return;
+
+        if (msg.type === "ready") {
+            sendWorldWallet();
+        } else if (msg.type === "earn" && msg.amount > 0) {
+            addCoins(msg.amount);
+            farmSync("/api/farm/sell", msg.amount);
+            sendWorldWallet();
+        } else if (msg.type === "spend" && msg.amount > 0) {
+            if (currentCoins < msg.amount) {
+                sendWorldWallet();
+                return;
+            }
+            currentCoins -= msg.amount;
+            renderBalances();
+            saveWallet();
+            farmSync("/api/farm/buy", msg.amount);
+            sendWorldWallet();
+        }
+    });
+
+    if (btnOpenWorld2) {
+        btnOpenWorld2.addEventListener("click", () => {
+            if (world2Frame && !world2Frame.getAttribute("src")) {
+                world2Frame.setAttribute("src", "world2/index.html");
+            }
+            switchToScreen("screen-world2");
+            sendWorldWallet();
+        });
+    }
+    if (btnWorld2Back) {
+        btnWorld2Back.addEventListener("click", () => switchToScreen("screen-games", "screen-games"));
+    }
+    if (world2Frame) world2Frame.addEventListener("load", sendWorldWallet);
+
     renderGiftsLine();
     updateCenterGift();
     updateChanceUI();
