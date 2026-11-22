@@ -179,6 +179,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let serverMode = false;
     let serverInventory = null;
+    let serverWithdrawals = [];
 
     // Адрес API: по умолчанию тот же домен, но можно указать ?api=https://...
     // Это удобно, чтобы направить фронт на staging-сервер.
@@ -231,6 +232,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (Number.isFinite(data.stars)) currentStars = data.stars;
         if (Number.isFinite(data.coins)) currentCoins = data.coins;
         if (Array.isArray(data.inventory)) serverInventory = data.inventory;
+        if (Array.isArray(data.withdrawals)) serverWithdrawals = data.withdrawals;
         if (Number.isFinite(data.spins_left)) {
             spinsLeft = data.spins_left;
             renderSpins();
@@ -680,6 +682,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function renderInventory() {
+        renderWithdrawals();
         if (!inventoryGrid) return;
         inventoryGrid.innerHTML = "";
 
@@ -728,13 +731,13 @@ document.addEventListener("DOMContentLoaded", () => {
                             method: "POST",
                             body: JSON.stringify({ id: entry.id })
                         });
-                        applyServerState(result);
+                        if (result.stars !== undefined || result.coins !== undefined) applyServerState(result);
+                        if (result.withdrawals) serverWithdrawals = result.withdrawals;
                         renderInventory();
-                        setInventoryStatus("Заявка на вывод подарка «" + gift.name + "» создана.");
+                        setInventoryStatus(result.message || ("Заявка на вывод «" + gift.name + "» отправлена на проверку."));
                     } catch (error) {
                         setInventoryStatus("Не удалось отправить заявку. Попробуй ещё раз.", "#ff3838");
                     }
-                    return;
                 }
                 ownedGifts.splice(entry.position, 1);
                 saveOwnedGifts();
@@ -2071,6 +2074,85 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     if (world2Frame) world2Frame.addEventListener("load", sendWorldWallet);
+
+    // ==========================================================================
+    // 9. ВЫВОД ЗВЁЗД: заявка с заморозкой, ответ — статус и список заявок
+    // ==========================================================================
+    const WD_MIN = 2000;
+    const wdAmount = document.getElementById("wd-amount");
+    const wdSend = document.getElementById("wd-send");
+    const wdNote = document.getElementById("wd-note");
+    const wdList = document.getElementById("wd-list");
+    const WD_LABELS = {
+        requested: "На проверке",
+        approved: "Одобрена",
+        done: "Выплачена",
+        rejected: "Отклонена",
+        failed: "Ошибка"
+    };
+
+    function wdSay(text, bad) {
+        if (!wdNote) return;
+        wdNote.textContent = text || "";
+        wdNote.style.color = bad ? "#ff3838" : "#ccff00";
+    }
+
+    function renderWithdrawals() {
+        if (!wdList) return;
+        wdList.innerHTML = "";
+        if (!serverWithdrawals.length) return;
+        serverWithdrawals.slice(0, 8).forEach(w => {
+            const row = document.createElement("div");
+            row.className = "wd-item";
+            row.dataset.status = w.status;
+            const what = w.kind === "stars"
+                ? "Звёзды " + w.amount + " ⭐"
+                : "Подарок " + w.amount + " ⭐";
+            row.innerHTML = "<span>" + what + "</span><span>" + (WD_LABELS[w.status] || w.status) + "</span>";
+            wdList.appendChild(row);
+        });
+    }
+
+    function applyWithdrawals(list) {
+        if (Array.isArray(list)) {
+            serverWithdrawals = list;
+            renderWithdrawals();
+        }
+    }
+    window.applyWithdrawals = applyWithdrawals;
+
+    if (wdSend) {
+        wdSend.addEventListener("click", async () => {
+            const amount = Math.floor(Number(wdAmount ? wdAmount.value : 0));
+            if (!Number.isFinite(amount) || amount < WD_MIN) {
+                wdSay("Минимум для вывода — " + WD_MIN + " ⭐", true);
+                return;
+            }
+            if (amount > currentStars) {
+                wdSay("На балансе только " + currentStars + " ⭐", true);
+                return;
+            }
+            wdSend.disabled = true;
+            wdSay("Отправляю заявку...");
+            try {
+                const result = await api("/api/stars/withdraw", {
+                    method: "POST",
+                    body: JSON.stringify({ amount: amount })
+                });
+                applyServerState(result);
+                applyWithdrawals(result.withdrawals);
+                wdSay(result.message || "Заявка отправлена на проверку");
+            } catch (error) {
+                if (error.status === 409) wdSay("У тебя уже есть активная заявка", true);
+                else if (error.status === 402) wdSay("Недостаточно звёзд", true);
+                else if (error.status === 400) wdSay("Сумма от 2000 до 10000 ⭐", true);
+                else if (error.status === 429) wdSay("Лимит заявок на сегодня исчерпан", true);
+                else wdSay("Сервер не ответил. Попробуй ещё раз.", true);
+            } finally {
+                wdSend.disabled = false;
+            }
+        });
+    }
 
     renderGiftsLine();
     updateCenterGift();

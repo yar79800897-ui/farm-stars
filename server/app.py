@@ -1,3 +1,4 @@
+import hmac
 import json
 import mimetypes
 import os
@@ -56,6 +57,12 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return data if isinstance(data, dict) else {}
 
+    def _admin_ok(self):
+        token = os.environ.get("ADMIN_TOKEN") or ""
+        if not token:
+            return False
+        return hmac.compare_digest(token, self.headers.get("X-Admin-Token") or "")
+
     def _identity(self):
         """Возвращает uid и имя: сначала Telegram, иначе гость по device id."""
         user = tgauth.validate(self.headers.get("X-Init-Data", ""))
@@ -109,7 +116,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(401, {"error": "unauthorized"})
             payload = store.user_public(row)
             payload["inventory"] = store.inventory_of(uid)
+            payload["withdrawals"] = store.withdrawals_of(uid)
             return self._json(200, payload)
+
+        if path == "/api/admin/withdrawals":
+            if not self._admin_ok():
+                return self._json(403, {"error": "forbidden"})
+            status_filter = (query or {}).get("status", [""])[0] or None
+            return self._json(200, {"items": store.admin_withdrawals(status_filter)})
 
         if path == "/api/diag":
             try:
@@ -193,6 +207,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(401, {"error": "unauthorized"})
             data = self._body()
             status, payload = store.withdraw(uid, data.get("id"))
+            return self._json(status, payload)
+
+        if path == "/api/stars/withdraw":
+            uid, row = self._identity()
+            if row is None:
+                return self._json(401, {"error": "unauthorized"})
+            data = self._body()
+            status, payload = store.withdraw_stars(uid, data.get("amount"))
+            return self._json(status, payload)
+
+        if path == "/api/admin/withdrawals/decision":
+            if not self._admin_ok():
+                return self._json(403, {"error": "forbidden"})
+            data = self._body()
+            status, payload = store.admin_decide(
+                data.get("id"), data.get("action"), data.get("admin") or "admin",
+                data.get("note"), data.get("ref"))
             return self._json(status, payload)
 
         if path == "/api/exchange":
@@ -287,7 +318,8 @@ class Handler(BaseHTTPRequestHandler):
                 payment.get("invoice_payload", ""),
                 payment.get("telegram_payment_charge_id", "")
             )
-        return self._json(200, {"ok": True})
+            return self._json(200, {"ok": True})
+
 
     # ---------- статика ----------
 

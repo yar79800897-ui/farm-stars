@@ -92,6 +92,31 @@ SCHEMA = [
         created INTEGER NOT NULL
     )""",
     "CREATE INDEX IF NOT EXISTS invoices_uid ON invoices(uid)",
+    """CREATE TABLE IF NOT EXISTS withdrawals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        item_id INTEGER,
+        amount INTEGER NOT NULL DEFAULT 0,
+        gift TEXT,
+        status TEXT NOT NULL DEFAULT 'requested',
+        created INTEGER NOT NULL,
+        updated INTEGER NOT NULL,
+        admin TEXT,
+        note TEXT,
+        delivery_ref TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS withdrawals_uid ON withdrawals(uid)",
+    "CREATE INDEX IF NOT EXISTS withdrawals_status ON withdrawals(status)",
+    """CREATE TABLE IF NOT EXISTS wallet_ops (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid TEXT NOT NULL,
+        delta INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        ref TEXT,
+        ts INTEGER NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS wallet_ops_uid ON wallet_ops(uid)",
     """CREATE TABLE IF NOT EXISTS games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         mode TEXT NOT NULL DEFAULT 'checkers',
@@ -361,6 +386,134 @@ def apply_promo(uid, code):
     }
 
 
+WITHDRAW_STARS_MIN = 2000
+WITHDRAW_STARS_MAX = 10000
+WITHDRAW_DAILY_LIMIT = 3
+# Мягкие проверки аккаунта: включаются переменными окружения, когда пойдут выплаты
+WITHDRAW_MIN_AGE_H = int(os.environ.get("WITHDRAW_MIN_AGE_H") or 0)
+WITHDRAW_MIN_XP = int(os.environ.get("WITHDRAW_MIN_XP") or 0)
+WITHDRAW_ACTIVE = ("requested", "approved", "sending")
+
+
+def withdrawals_of(uid):
+    rows = backend().query(
+        "SELECT id, kind, item_id, amount, gift, status, created, updated, note, delivery_ref "
+        "FROM withdrawals WHERE uid=? ORDER BY id DESC LIMIT 30", (uid,))
+    return [dict(row) for row in rows]
+
+
+def _withdrawal_checks(uid, db):
+    rows = db.query("SELECT xp, created FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    user = rows[0]
+    ts = now()
+    if WITHDRAW_MIN_AGE_H and ts - (user.get("created") or ts) < WITHDRAW_MIN_AGE_H * 3600:
+        return 403, {"error": "too_new", "hours": WITHDRAW_MIN_AGE_H}
+    if WITHDRAW_MIN_XP and (user.get("xp") or 0) < WITHDRAW_MIN_XP:
+        return 403, {"error": "low_level", "xp": WITHDRAW_MIN_XP}
+
+    stats = db.query(
+        "SELECT COUNT(*) AS n FROM withdrawals WHERE uid=? AND created>=?", (uid, ts - 86400))
+    if (stats[0].get("n") or 0) >= WITHDRAW_DAILY_LIMIT:
+        return 429, {"error": "daily_limit", "limit": WITHDRAW_DAILY_LIMIT}
+    return None, None
+
+
+def withdraw_stars(uid, amount):
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return 400, {"error": "bad_amount"}
+
+    if amount < WITHDRAW_STARS_MIN or amount > WITHDRAW_STARS_MAX:
+        return 400, {
+            "error": "bad_amount",
+            "min": WITHDRAW_STARS_MIN,
+            "max": WITHDRAW_STARS_MAX,
+        }
+
+    db = backend()
+    active = db.query(
+        "SELECT id FROM withdrawals WHERE uid=? AND kind='stars' AND status IN ('requested','approved','sending')",
+        (uid,))
+    if active:
+        return 409, {"error": "pending_exists"}
+
+    status, payload = _withdrawal_checks(uid, db)
+    if status:
+        return status, payload
+
+    rows = db.query("SELECT stars FROM users WHERE uid=?", (uid,))
+    if not rows:
+        return 401, {"error": "no_user"}
+    if (rows[0].get("stars") or 0) < amount:
+        return 402, {"error": "no_money", "stars": rows[0].get("stars") or 0}
+
+    ts = now()
+    db.query("UPDATE users SET stars=stars-? WHERE uid=? AND stars>=?", (amount, uid, amount))
+    db.query("INSERT INTO wallet_ops(uid, delta, reason, ref, ts) VALUES(?,?,?,?,?)",
+             (uid, -amount, "withdraw_hold", "stars", ts))
+    db.query(
+        "INSERT INTO withdrawals(uid, kind, amount, status, created, updated) "
+        "VALUES(?, 'stars', ?, 'requested', ?, ?)", (uid, amount, ts, ts))
+
+    after = db.query("SELECT stars, coins FROM users WHERE uid=?", (uid,))[0]
+    return 200, {
+        "ok": True,
+        "message": "Заявка на вывод звёзд отправлена на проверку",
+        "stars": after.get("stars") or 0,
+        "coins": after.get("coins") or 0,
+        "withdrawals": withdrawals_of(uid),
+    }
+
+
+def admin_withdrawals(status_filter=None):
+    db = backend()
+    if status_filter:
+        rows = db.query("SELECT * FROM withdrawals WHERE status=? ORDER BY id DESC LIMIT 200",
+                        (status_filter,))
+    else:
+        rows = db.query("SELECT * FROM withdrawals ORDER BY id DESC LIMIT 200")
+    return [dict(row) for row in rows]
+
+
+def admin_decide(wid, action, admin, note=None, ref=None):
+    try:
+        wid = int(wid)
+    except (TypeError, ValueError):
+        return 400, {"error": "bad_id"}
+
+    db = backend()
+    rows = db.query("SELECT * FROM withdrawals WHERE id=?", (wid,))
+    if not rows:
+        return 404, {"error": "not_found"}
+    w = rows[0]
+    if w["status"] not in ("requested", "approved"):
+        return 409, {"error": "closed"}
+
+    ts = now()
+    if action == "approve":
+        if w["kind"] == "gift" and w.get("item_id"):
+            db.query("DELETE FROM inventory WHERE id=? AND uid=?", (w["item_id"], w["uid"]))
+        db.query(
+            "UPDATE withdrawals SET status='done', admin=?, note=?, delivery_ref=?, updated=? WHERE id=?",
+            (admin or "", note or "", ref or "", ts, wid))
+    elif action == "reject":
+        if w["kind"] == "stars":
+            db.query("UPDATE users SET stars=stars+? WHERE uid=?", (w["amount"], w["uid"]))
+            db.query("INSERT INTO wallet_ops(uid, delta, reason, ref, ts) VALUES(?,?,?,?,?)",
+                     (w["uid"], w["amount"], "withdraw_refund", "stars", ts))
+        db.query(
+            "UPDATE withdrawals SET status='rejected', admin=?, note=?, updated=? WHERE id=?",
+            (admin or "", note or "", ts, wid))
+    else:
+        return 400, {"error": "bad_action"}
+
+    fresh = db.query("SELECT * FROM withdrawals WHERE id=?", (wid,))[0]
+    return 200, {"ok": True, "withdrawal": dict(fresh)}
+
+
 def withdraw(uid, item_id):
     try:
         item_id = int(item_id)
@@ -372,8 +525,27 @@ def withdraw(uid, item_id):
     if not rows:
         return 404, {"error": "not_found"}
 
-    db.query("DELETE FROM inventory WHERE id=? AND uid=?", (item_id, uid))
-    return 200, {"ok": True, "gift": rows[0]["gift"], "inventory": inventory_of(uid)}
+    active = db.query(
+        "SELECT id FROM withdrawals WHERE item_id=? AND status IN ('requested','approved','sending')",
+        (item_id,))
+    if active:
+        return 409, {"error": "already_requested"}
+
+    status, payload = _withdrawal_checks(uid, db)
+    if status:
+        return status, payload
+
+    ts = now()
+    db.query(
+        "INSERT INTO withdrawals(uid, kind, item_id, amount, gift, status, created, updated) "
+        "VALUES(?, 'gift', ?, ?, ?, 'requested', ?, ?)",
+        (uid, item_id, rows[0].get("price") or 0, rows[0].get("gift"), ts, ts),
+    )
+    return 200, {
+        "ok": True,
+        "message": "Заявка на вывод подарка отправлена на проверку",
+        "withdrawals": withdrawals_of(uid),
+    }
 
 
 def exchange(uid, coins):

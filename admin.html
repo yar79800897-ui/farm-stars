@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Выводы — админка Farm Stars</title>
+<style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; min-width: 0; }
+    strong, b { font-weight: 700; }
+    label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8e9297; }
+    body {
+        margin: 0;
+        padding: 14px;
+        background: #0b0c0e;
+        color: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    body { max-width: 720px; margin: 0 auto; }
+    .row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 12px; }
+    input, select, button {
+        font: inherit;
+        min-width: 0;
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid #242933;
+        background: #181b22;
+        color: #ffffff;
+    }
+    button { cursor: pointer; }
+    button.ok { background: #ccff00; color: #0b0c0e; border-color: #ccff00; font-weight: 800; }
+    button.no { color: #ff8a7a; border-color: #4a2622; }
+    .card {
+        background: #13151a;
+        border: 1px solid #242933;
+        border-radius: 14px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+    }
+    .card .top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: #8e9297; }
+    .card .gift { font-size: 15px; font-weight: 800; margin: 4px 0; }
+    .card .uid { font-size: 11px; color: #5d6470; word-break: break-all; }
+    .card .acts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .card .acts input { flex: 1 1 120px; padding: 7px 9px; font-size: 13px; }
+    .card .acts button { padding: 7px 12px; font-size: 13px; }
+    .status { font-size: 12px; color: #ccff00; min-height: 16px; margin-bottom: 8px; }
+    .empty { color: #8e9297; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>Выводы</h1>
+<div class="row">
+    <input id="token" type="password" placeholder="ADMIN_TOKEN" autocomplete="off">
+    <select id="filter">
+        <option value="requested">В ожидании</option>
+        <option value="done">Выданы</option>
+        <option value="rejected">Отклонены</option>
+        <option value="">Все</option>
+    </select>
+    <button id="load" class="ok">Показать</button>
+</div>
+<p class="status" id="status"></p>
+<div id="list"></div>
+
+<script>
+    var tokenInput = document.getElementById('token');
+    var filter = document.getElementById('filter');
+    var list = document.getElementById('list');
+    var statusEl = document.getElementById('status');
+
+    tokenInput.value = localStorage.getItem('adminToken') || '';
+
+    function say(text, bad) {
+        statusEl.textContent = text || '';
+        statusEl.style.color = bad ? '#ff8a7a' : '#ccff00';
+    }
+
+    function headers() {
+        return { 'X-Admin-Token': tokenInput.value };
+    }
+
+    function card(w) {
+        var el = document.createElement('div');
+        el.className = 'card';
+
+        var top = document.createElement('div');
+        top.className = 'top';
+        top.innerHTML = '<span>#' + w.id + ' · ' + new Date(w.created * 1000).toLocaleString('ru-RU') + '</span><span>' + w.status + '</span>';
+        el.appendChild(top);
+
+        var gift = document.createElement('div');
+        gift.className = 'gift';
+        gift.textContent = w.kind === 'gift'
+            ? (w.gift || 'подарок') + ' · ' + w.amount + ' ⭐'
+            : 'Вывод ' + w.amount + ' ⭐';
+        el.appendChild(gift);
+
+        var uid = document.createElement('div');
+        uid.className = 'uid';
+        uid.textContent = w.uid + (w.admin ? ' · ' + w.admin : '') + (w.delivery_ref ? ' · ' + w.delivery_ref : '');
+        el.appendChild(uid);
+
+        if (w.note) {
+            var note = document.createElement('div');
+            note.className = 'uid';
+            note.textContent = 'Заметка: ' + w.note;
+            el.appendChild(note);
+        }
+
+        if (w.status === 'requested' || w.status === 'approved') {
+            var acts = document.createElement('div');
+            acts.className = 'acts';
+
+            var noteInput = document.createElement('input');
+            noteInput.placeholder = 'заметка / hash / id сообщения';
+            acts.appendChild(noteInput);
+
+            var ok = document.createElement('button');
+            ok.className = 'ok';
+            ok.textContent = 'Выдать';
+            ok.addEventListener('click', function () { decide(w.id, 'approve', noteInput.value); });
+            acts.appendChild(ok);
+
+            var no = document.createElement('button');
+            no.className = 'no';
+            no.textContent = 'Отклонить';
+            no.addEventListener('click', function () { decide(w.id, 'reject', noteInput.value); });
+            acts.appendChild(no);
+
+            el.appendChild(acts);
+        }
+        return el;
+    }
+
+    async function decide(id, action, note) {
+        say('Сохраняю...');
+        try {
+            var res = await fetch('/api/admin/withdrawals/decision', {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, headers()),
+                body: JSON.stringify({ id: id, action: action, note: note, admin: 'admin' })
+            });
+            var data = await res.json();
+            if (!res.ok) throw new Error(data.error || res.status);
+            say(action === 'approve' ? 'Заявка #' + id + ' выдана' : 'Заявка #' + id + ' отклонена');
+            load();
+        } catch (error) {
+            say('Ошибка: ' + error.message, true);
+        }
+    }
+
+    async function load() {
+        if (!tokenInput.value) { say('Введите ADMIN_TOKEN', true); return; }
+        localStorage.setItem('adminToken', tokenInput.value);
+        say('Загружаю...');
+        list.innerHTML = '';
+        try {
+            var res = await fetch('/api/admin/withdrawals?status=' + encodeURIComponent(filter.value), { headers: headers() });
+            if (res.status === 403) { say('Токен не подошёл', true); return; }
+            var data = await res.json();
+            var items = data.items || [];
+            if (!items.length) {
+                list.innerHTML = '<p class="empty">Пусто</p>';
+                say('');
+                return;
+            }
+            items.forEach(function (w) { list.appendChild(card(w)); });
+            say('Заявок: ' + items.length);
+        } catch (error) {
+            say('Ошибка загрузки: ' + error.message, true);
+        }
+    }
+
+    document.getElementById('load').addEventListener('click', load);
+    filter.addEventListener('change', function () { if (tokenInput.value) load(); });
+</script>
+</body>
+</html>
